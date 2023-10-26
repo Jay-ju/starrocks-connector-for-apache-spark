@@ -17,16 +17,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql
+package com.starrocks.connector.spark.read
 
 import com.starrocks.connector.spark.cfg.ConfigurationOptions.STARROCKS_VALUE_READER_CLASS
 import com.starrocks.connector.spark.cfg.Settings
 import com.starrocks.connector.spark.rdd.{AbstractStarrocksRDD, AbstractStarrocksRDDIterator, StarrocksPartition}
 import com.starrocks.connector.spark.rest.PartitionDefinition
-
-import org.apache.spark.{Partition, SparkContext, TaskContext}
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.{Partition, SparkContext, TaskContext}
 
 private[spark] class ScalaStarrocksRowRDD(
   sc: SparkContext,
@@ -46,10 +45,10 @@ private[spark] class ScalaStarrocksRowRDDIterator(
   extends AbstractStarrocksRDDIterator[Row](context, partition) {
 
   override def initReader(settings: Settings) = {
-    settings.setProperty(STARROCKS_VALUE_READER_CLASS, classOf[ScalaStarrocksRowValueReader].getName)
+    settings.setProperty(STARROCKS_VALUE_READER_CLASS, classOf[StarrocksRowValueReader].getName)
   }
 
   override def createValue(value: Object): Row = {
-    value.asInstanceOf[ScalaStarrocksRow]
+    value.asInstanceOf[Row]
   }
 }

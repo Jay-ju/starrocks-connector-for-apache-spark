@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.Serializable;
 
-public class StarRocksDataWriter implements DataWriter<InternalRow>, Serializable {
+public class StarRocksDataWriter extends StarRocksWriter {
     private static final Logger log = LoggerFactory.getLogger(StarRocksDataWriter.class);
 
     private final WriteStarRocksConfig config;

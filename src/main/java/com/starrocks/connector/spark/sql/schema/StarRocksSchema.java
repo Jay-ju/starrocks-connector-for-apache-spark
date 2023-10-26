@@ -19,6 +19,8 @@
 
 package com.starrocks.connector.spark.sql.schema;
 
+import com.starrocks.connector.spark.sql.dpp.EtlJobConfig;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,17 +28,29 @@ import java.util.Map;
 import static com.starrocks.connector.spark.sql.schema.StarRocksField.__OP;
 
 public class StarRocksSchema {
-    private final List<StarRocksField> columns;
-    private final List<StarRocksField> pks;
-    private final Map<String, StarRocksField> columnMap;
+    private List<StarRocksField> columns;
+    private List<StarRocksField> pks;
+    private Map<String, StarRocksField> columnMap;
 
+    private EtlJobConfig.EtlTable etlTable;
+    private Long tableId;
+
+    // only use for schema
     public StarRocksSchema(List<StarRocksField> columns, List<StarRocksField> pks) {
+        this.columns = columns;
+        this.pks = pks;
+    }
+
+    public StarRocksSchema(List<StarRocksField> columns, List<StarRocksField> pks,
+                           EtlJobConfig.EtlTable etlTable, Long tableId) {
         this.columns = columns;
         this.pks = pks;
         this.columnMap = new HashMap<>();
         for (StarRocksField field : columns) {
             columnMap.put(field.getName(), field);
         }
+        this.etlTable = etlTable;
+        this.tableId = tableId;
     }
 
     public List<StarRocksField> getColumns() {
@@ -54,4 +68,13 @@ public class StarRocksSchema {
 
         return columnMap.get(columnName);
     }
+
+    public EtlJobConfig.EtlTable getEtlTable() {
+        return etlTable;
+    }
+
+    public Long getTableId() {
+        return tableId;
+    }
+
 }

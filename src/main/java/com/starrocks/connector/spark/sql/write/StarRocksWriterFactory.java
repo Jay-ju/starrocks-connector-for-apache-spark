@@ -28,6 +28,8 @@ import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static com.starrocks.connector.spark.sql.conf.WriteStarRocksConfig.FOR_TEST_LOAD_WRITER;
+
 public class StarRocksWriterFactory implements DataWriterFactory, StreamingDataWriterFactory {
 
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksWriterFactory.class);
@@ -50,8 +52,10 @@ public class StarRocksWriterFactory implements DataWriterFactory, StreamingDataW
         return createAndOpenWriter(partitionId, taskId, epochId);
     }
 
-    private StarRocksDataWriter createAndOpenWriter(int partitionId, long taskId, long epochId) {
-        StarRocksDataWriter writer = new StarRocksDataWriter(config, schema, partitionId, taskId, epochId);
+    private DataWriter createAndOpenWriter(int partitionId, long taskId, long epochId) {
+        //TODO here can change write mode
+        StarRocksWriter writer = FOR_TEST_LOAD_WRITER ? new StarRocksDppWriter(config, partitionId, taskId, epochId) :
+        new StarRocksDataWriter(config, schema, partitionId, taskId, epochId);
         try {
             writer.open();
         } catch (Exception e) {

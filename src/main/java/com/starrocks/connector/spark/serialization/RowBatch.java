@@ -116,7 +116,6 @@ public class RowBatch {
                 new ByteArrayInputStream(nextResult.getRows()),
                 rootAllocator
         );
-        this.offsetInRowBatch = 0;
         try {
             this.root = arrowStreamReader.getVectorSchemaRoot();
             while (arrowStreamReader.loadNextBatch()) {
@@ -147,10 +146,7 @@ public class RowBatch {
     }
 
     public boolean hasNext() {
-        if (offsetInRowBatch < readRowCount) {
-            return true;
-        }
-        return false;
+        return offsetInRowBatch < readRowCount;
     }
 
     private void addValueToRow(int rowIndex, Object obj) {
