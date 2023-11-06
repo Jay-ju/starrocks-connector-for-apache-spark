@@ -15,9 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark.sql.preprocessor;
 
-// RollupTreeBuilder is used to get the RollupTree from the TableMeta
-public abstract interface RollupTreeBuilder {
-    public RollupTreeNode build(EtlJobConfig.EtlTable tableMeta);
+import com.google.common.base.Strings;
+
+// Exception for Spark DPP process
+public class SparkWriteSDKException extends Exception {
+    public SparkWriteSDKException(String msg, Throwable cause) {
+        super(Strings.nullToEmpty(msg), cause);
+    }
+
+    public SparkWriteSDKException(Throwable cause) {
+        super(cause);
+    }
+
+    public SparkWriteSDKException(String msg, Throwable cause, boolean enableSuppression, boolean writableStackTrace) {
+        super(Strings.nullToEmpty(msg), cause, enableSuppression, writableStackTrace);
+    }
+
+    public SparkWriteSDKException(String msg) {
+        super(Strings.nullToEmpty(msg));
+    }
 }

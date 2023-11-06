@@ -15,49 +15,39 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark.sql.preprocessor;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
-import org.apache.parquet.column.ParquetProperties;
-import org.apache.parquet.hadoop.ParquetWriter;
-import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.spark.Partitioner;
 import org.apache.spark.TaskContext;
 import org.apache.spark.api.java.JavaPairRDD;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.api.java.function.Function2;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
-import org.apache.spark.api.java.function.VoidFunction;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder;
 import org.apache.spark.sql.catalyst.encoders.RowEncoder;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetWriteSupport;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.storage.StorageLevel;
+import org.apache.spark.unsafe.types.UTF8String;
 import org.apache.spark.util.SerializableConfiguration;
 import scala.Tuple2;
 
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Queue;
+import java.util.*;
+
+import static org.apache.spark.sql.types.DataTypes.StringType;
 
 // This class is a Spark-based data preprocessing program,
 // which will make use of the distributed compute framework of spark to
@@ -70,8 +60,8 @@ import java.util.Queue;
 // 2. repartition data by using starrocks data model(partition and bucket)
 // 3. process aggregation if needed
 // 4. write data to parquet file
-public final class SparkDpp implements java.io.Serializable {
-    private static final Logger LOG = LogManager.getLogger(SparkDpp.class);
+public final class StarRocksPreProcessor implements java.io.Serializable {
+    private static final Logger LOG = LogManager.getLogger(StarRocksPreProcessor.class);
 
     // save the hadoop configuration from spark session.
     // because hadoop configuration is not serializable,
@@ -79,113 +69,88 @@ public final class SparkDpp implements java.io.Serializable {
     private SerializableConfiguration serializableHadoopConf;
 
     // just for ut
-    public SparkDpp(Configuration hadoopConf) {
-        hadoopConf.setBoolean("spark.sql.parquet.fieldId.write.enabled", true);
+    public StarRocksPreProcessor(Configuration hadoopConf) {
         serializableHadoopConf = new SerializableConfiguration(hadoopConf);
     }
 
     // write data to parquet file by using writing the parquet scheme of spark.
-    private void writeRepartitionAndSortedRDDToParquet(JavaPairRDD<List<Object>, Object[]> resultRDD,
-                                                       long tableId,
-                                                       EtlJobConfig.EtlIndex indexMeta,
-                                                       SparkRDDAggregator[] sparkRDDAggregators,
-                                                       Map<String, Integer> bucketKeyMap) {
-        // TODO(wb) should deal largint as BigInteger instead of string when using biginteger as key,
+    public JavaPairRDD repartitionAndSortedRDD(JavaPairRDD<List<Object>, Object[]> resultRDD,
+                                               Map<String, Integer> bucketKeyMap) {
+        // TODO(wb) should deal largeint as BigInteger instead of string when using biginteger as key,
         // data type may affect sorting logic
-        StructType dstSchema = DppUtils.createDstTableSchema(indexMeta.columns, false, true);
-        ExpressionEncoder encoder = RowEncoder.apply(dstSchema);
-        ExpressionEncoderHelper encoderHelper = new ExpressionEncoderHelper(encoder);
-
-        resultRDD.repartitionAndSortWithinPartitions(new BucketPartitioner(bucketKeyMap), new BucketComparator())
-                .foreachPartition((VoidFunction<Iterator<Tuple2<List<Object>, Object[]>>>) t -> {
-                    // write the data to dst file
-                    Configuration conf = serializableHadoopConf.value();
-                    FileSystem fs = FileSystem.get(new URI("hdfs:/"), conf);
-                    String lastBucketKey = null;
-                    ParquetWriter<InternalRow> parquetWriter = null;
-                    TaskContext taskContext = TaskContext.get();
-                    long taskAttemptId = taskContext.taskAttemptId();
-                    String dstPath = "";
-                    String tmpPath = "";
-
-                    while (t.hasNext()) {
-                        Tuple2<List<Object>, Object[]> pair = t.next();
-                        List<Object> keyColumns = pair._1();
-                        Object[] valueColumns = pair._2();
-                        if ((keyColumns.size() + valueColumns.length) <= 1) {
-                            LOG.warn("invalid row:" + pair);
-                            continue;
-                        }
-
-                        String curBucketKey = keyColumns.get(0).toString();
-                        List<Object> columnObjects = new ArrayList<>();
-                        for (int i = 1; i < keyColumns.size(); ++i) {
-                            columnObjects.add(keyColumns.get(i));
-                        }
-                        for (int i = 0; i < valueColumns.length; ++i) {
-                            columnObjects.add(sparkRDDAggregators[i].finalize(valueColumns[i]));
-                        }
-
-                        Row rowWithoutBucketKey = RowFactory.create(columnObjects.toArray());
-                        // if the bucket key is new, it will belong to a new tablet
-                        if (lastBucketKey == null || !curBucketKey.equals(lastBucketKey)) {
-                            renameParquetFile(parquetWriter, fs, tmpPath, dstPath);
-                            // flush current writer and create a new writer
-                            String[] bucketKey = curBucketKey.split("_");
-                            if (bucketKey.length != 2) {
-                                LOG.warn("invalid bucket key:" + curBucketKey);
-                                continue;
-                            }
-                            int partitionId = Integer.parseInt(bucketKey[0]);
-                            int bucketId = Integer.parseInt(bucketKey[1]);
-                            dstPath = String.format("{}_{}_{}_{}_{}", tableId, partitionId, indexMeta.indexId,
-                                    bucketId, indexMeta.schemaHash);
-                            tmpPath = dstPath + "." + taskAttemptId;
-                            conf.setBoolean("spark.sql.parquet.writeLegacyFormat", false);
-                            conf.setBoolean("spark.sql.parquet.int64AsTimestampMillis", false);
-                            conf.setBoolean("spark.sql.parquet.int96AsTimestamp", true);
-                            conf.setBoolean("spark.sql.parquet.binaryAsString", false);
-                            conf.set("spark.sql.parquet.outputTimestampType", "INT96");
-                            ParquetWriteSupport.setSchema(dstSchema, conf);
-                            ParquetWriteSupport parquetWriteSupport = new ParquetWriteSupport();
-                            parquetWriter = new ParquetWriter<>(new Path(tmpPath), parquetWriteSupport,
-                                    CompressionCodecName.SNAPPY,
-                                    256 * 1024 * 1024, 16 * 1024,
-                                    1024 * 1024,
-                                    true, false,
-                                    ParquetProperties.WriterVersion.PARQUET_1_0,
-                                    conf);
-                            if (parquetWriter != null) {
-                                LOG.info("[HdfsOperate]>> initialize writer succeed! path:" + tmpPath);
-                            }
-                            lastBucketKey = curBucketKey;
-                        }
-                        InternalRow internalRow = encoderHelper.toRow(rowWithoutBucketKey);
-                        parquetWriter.write(internalRow);
-                    }
-                    renameParquetFile(parquetWriter, fs, tmpPath, dstPath);
-                });
+        return resultRDD.repartitionAndSortWithinPartitions(new BucketPartitioner(bucketKeyMap),
+                new BucketComparator());
     }
 
-    private void renameParquetFile(ParquetWriter parquetWriter, FileSystem fs,
-                                   String tmpPath, String dstPath) throws IOException {
-        if (parquetWriter != null) {
-            try {
-                parquetWriter.close();
-                fs.rename(new Path(tmpPath), new Path(dstPath));
-            } catch (IOException ioe) {
-                LOG.warn("rename from tmpPath" + tmpPath + " to dstPath:" + dstPath +
-                        " failed. exception:" + ioe);
-                throw ioe;
+    public JavaRDD<InternalRow> processPartition(JavaPairRDD rdd,
+                                                 EtlJobConfig.EtlIndex indexMeta,
+                                                 SparkRDDAggregator[] sparkRDDAggregators,
+                                                 Map<Long, EtlJobConfig.EtlPartition> partitionKeyMap) {
+        StructType tableSchema = DppUtils.createDstTableSchema(indexMeta.columns, false, true);
+
+        // add tablet column
+        StructType internalTableSchema = tableSchema.add("tablet_id", StringType);
+
+        ExpressionEncoder encoder = RowEncoder.apply(internalTableSchema);
+        return rdd.mapPartitionsWithIndex((Function2<Integer, Iterator<Tuple2<List<Object>, Object[]>>, Iterator>) (idx, t) -> {
+            List<InternalRow> internalRows = new ArrayList<>();
+            while (t.hasNext()) {
+                String lastBucketKey = null;
+                TaskContext taskContext = TaskContext.get();
+                Tuple2<List<Object>, Object[]> pair = t.next();
+                List<Object> keyColumns = pair._1();
+                Object[] valueColumns = pair._2();
+                if ((keyColumns.size() + valueColumns.length) <= 1) {
+                    LOG.warn("invalid row:" + pair);
+                }
+
+                String curBucketKey = keyColumns.get(0).toString();
+                List<Object> allColumnPerRow = new ArrayList<>();
+                for (int i = 1; i < keyColumns.size(); ++i) {
+                    allColumnPerRow.add(keyColumns.get(i));
+                }
+                // key first element is partition_bucket
+                int keySize = keyColumns.size() - 1;
+                for (int i = 0; i < valueColumns.length; ++i) {
+                    allColumnPerRow.add(sparkRDDAggregators[i].finalize(valueColumns[i]));
+                }
+
+                Long tabletId = -1L;
+                Long backendId = -1L;
+                String storagePath = "";
+                // if the bucket key is new, it will belong to a new tablet
+                if (lastBucketKey == null || !curBucketKey.equals(lastBucketKey)) {
+                    // flush current writer and create a new writer
+                    String[] bucketKey = curBucketKey.split("_");
+                    if (bucketKey.length != 2) {
+                        LOG.warn("invalid bucket key:" + curBucketKey);
+                    }
+                    Long partitionId = Long.parseLong(bucketKey[0]);
+                    int bucketId = Integer.parseInt(bucketKey[1]);
+                    lastBucketKey = curBucketKey;
+                    // must order by asc
+                    tabletId = partitionKeyMap.get(partitionId).getTabletIds().get(bucketId);
+                    backendId = partitionKeyMap.get(partitionId).getBackendIds().get(bucketId);
+                    storagePath = partitionKeyMap.get(partitionId).getStoragePath();
+                }
+                String partitionExtension = String.join("\u0001", String.valueOf(tabletId), String.valueOf(backendId), storagePath);
+                allColumnPerRow.add(partitionExtension);
+                Row rowWithTabletId = RowFactory.create(allColumnPerRow.toArray());
+
+                ExpressionEncoder.Serializer toRow = encoder.createSerializer();
+                internalRows.add(toRow.apply(rowWithTabletId));
             }
-        }
+            return internalRows.iterator();
+        }, true);
+
     }
 
     // TODO(wb) one shuffle to calculate the rollup in the same level
-    public void processRollupTree(RollupTreeNode rootNode,
-                                  JavaPairRDD<List<Object>, Object[]> rootRDD,
-                                  long tableId, EtlJobConfig.EtlIndex baseIndex,
-                                  Map<String, Integer> bucketKeyMap) throws SparkDppException {
+    public JavaRDD<InternalRow> processRollupTree(RollupTreeNode rootNode,
+                                                  JavaPairRDD<List<Object>, Object[]> rootRDD,
+                                                  EtlJobConfig.EtlIndex baseIndex,
+                                                  Map<String, Integer> bucketKeyMap,
+                                                  Map<Long, EtlJobConfig.EtlPartition> partitionKeyMap) throws SparkWriteSDKException {
         Queue<RollupTreeNode> nodeQueue = new LinkedList<>();
         nodeQueue.offer(rootNode);
         int currentLevel = 0;
@@ -230,14 +195,16 @@ public final class SparkDpp implements java.io.Serializable {
                 // if the children number larger than 1, persist the dataframe for performance
                 curRDD.persist(StorageLevel.MEMORY_AND_DISK());
             }
-            writeRepartitionAndSortedRDDToParquet(curRDD, tableId, curNode.indexMeta, sparkRDDAggregators, bucketKeyMap);
+            JavaPairRDD pairRDD = repartitionAndSortedRDD(curRDD, bucketKeyMap);
+            return processPartition(pairRDD, baseIndex, sparkRDDAggregators, partitionKeyMap);
         }
+        return new JavaSparkContext().emptyRDD();
     }
 
     private JavaPairRDD<List<Object>, Object[]> processRDDAggregate(JavaPairRDD<List<Object>, Object[]> currentPairRDD,
                                                                     RollupTreeNode curNode,
                                                                     SparkRDDAggregator[] sparkRDDAggregators)
-            throws SparkDppException {
+            throws SparkWriteSDKException {
         final boolean isDuplicateTable = !StringUtils.equalsIgnoreCase(curNode.indexMeta.indexType, "AGGREGATE")
                 && !StringUtils.equalsIgnoreCase(curNode.indexMeta.indexType, "UNIQUE");
 
@@ -295,7 +262,7 @@ public final class SparkDpp implements java.io.Serializable {
                                                                     List<String> childRollupValueColumns,
                                                                     List<String> parentRollupKeyColumns,
                                                                     List<String> parentRollupValueColumns)
-            throws SparkDppException {
+            throws SparkWriteSDKException {
         List<String> parentRollupColumns = new ArrayList<>();
         parentRollupColumns.addAll(parentRollupKeyColumns);
         parentRollupColumns.addAll(parentRollupValueColumns);
@@ -304,7 +271,7 @@ public final class SparkDpp implements java.io.Serializable {
         List<Integer> valueMap = getChildColumnIds(childRollupValueColumns, parentRollupColumns);
 
         if (keyMap.size() != childRollupKeyColumns.size() || valueMap.size() != childRollupValueColumns.size()) {
-            throw new SparkDppException(String.format(
+            throw new SparkWriteSDKException(String.format(
                     "column map index from child to parent has error, key size src: %s, dst: %s; value size src: %s, dst: %s",
                     childRollupKeyColumns.size(), keyMap.size(), childRollupValueColumns.size(), valueMap.size()));
         }
@@ -330,7 +297,8 @@ public final class SparkDpp implements java.io.Serializable {
     /**
      * check decimal,char/varchar
      */
-    public boolean validateData(Object srcValue, EtlJobConfig.EtlColumn etlColumn, ColumnParser columnParser, Row row) {
+    public boolean validateData(Object srcValue, EtlJobConfig.EtlColumn etlColumn, ColumnParser columnParser,
+                                InternalRow row) {
 
         switch (etlColumn.columnType.toUpperCase()) {
             case "DECIMALV2":
@@ -373,14 +341,14 @@ public final class SparkDpp implements java.io.Serializable {
      * 3 fill tuple with partition column
      */
     public JavaPairRDD<List<Object>, Object[]> fillTupleWithPartitionColumn(
-            Dataset<Row> dataframe,
             EtlJobConfig.EtlPartitionInfo partitionInfo,
+            RDD<InternalRow> rdd,
             List<Integer> partitionKeyIndex,
             List<StarRocksRangePartitioner.PartitionRangeKey> partitionRangeKeys,
             List<String> keyColumnNames,
             List<String> valueColumnNames,
             StructType dstTableSchema,
-            EtlJobConfig.EtlIndex baseIndex) throws SparkDppException {
+            EtlJobConfig.EtlIndex baseIndex) throws SparkWriteSDKException {
         List<String> distributeColumns = partitionInfo.distributionColumnRefs;
         Partitioner partitioner = new StarRocksRangePartitioner(partitionInfo, partitionKeyIndex, partitionRangeKeys);
 
@@ -392,37 +360,21 @@ public final class SparkDpp implements java.io.Serializable {
         // use PairFlatMapFunction instead of PairMapFunction because there will be
         // 0 or 1 output row for 1 input row
         JavaPairRDD<List<Object>, Object[]> resultPairRDD =
-                dataframe.toJavaRDD().flatMapToPair((PairFlatMapFunction<Row, List<Object>, Object[]>) row -> {
+                rdd.toJavaRDD().flatMapToPair((PairFlatMapFunction<InternalRow, List<Object>, Object[]>) row -> {
                     List<Tuple2<List<Object>, Object[]>> result = new ArrayList<>();
-                    List<Object> keyColumns = new ArrayList<>();
-                    List<Object> valueColumns = new ArrayList<>(valueColumnNames.size());
-                    List<Object> allColumns = new ArrayList<>();
-                    for (int i = 0; i < keyColumnNames.size(); i++) {
-                        String columnName = keyColumnNames.get(i);
-                        Object columnObject = row.get(row.fieldIndex(columnName));
-                        if (!validateData(columnObject, baseIndex.getColumn(columnName), parsers.get(i), row)) {
-                            return result.iterator();
-                        }
-                        keyColumns.add(columnObject);
-                        allColumns.add(columnObject);
+                    RowContext rowContext = new RowContext();
+                    boolean validData =
+                            rowContext.processRow(keyColumnNames, row, dstTableSchema, baseIndex, parsers, true) &&
+                            rowContext.processRow(valueColumnNames, row, dstTableSchema, baseIndex, parsers, false);
+                    if (!validData) {
+                        return result.iterator();
                     }
 
-                    for (int i = 0; i < valueColumnNames.size(); i++) {
-                        String columnName = valueColumnNames.get(i);
-                        Object columnObject = row.get(row.fieldIndex(columnName));
-                        if (!validateData(columnObject, baseIndex.getColumn(columnName),
-                                parsers.get(i + keyColumnNames.size()), row)) {
-                            return result.iterator();
-                        }
-                        valueColumns.add(columnObject);
-                        allColumns.add(columnObject);
-                    }
-
-                    int pid = partitioner.getPartition(new DppColumns(allColumns));
+                    int pid = partitioner.getPartition(new DppColumns(rowContext.getAllColumnObjects()));
                     if (pid < 0) {
                         LOG.warn("invalid partition for row:" + row + ", abnormal rows num:");
                     } else {
-                        // TODO(wb) support lagreint for hash
+                        // TODO(wb) support large int for hash
                         long hashValue = DppUtils.getHashValue(row, distributeColumns, dstTableSchema);
                         int bucketId =
                                 (int) ((hashValue & 0xffffffff) % partitionInfo.partitions.get(pid).bucketNum);
@@ -432,8 +384,8 @@ public final class SparkDpp implements java.io.Serializable {
 
                         List<Object> tuple = new ArrayList<>();
                         tuple.add(bucketKey);
-                        tuple.addAll(keyColumns);
-                        result.add(new Tuple2<>(tuple, valueColumns.toArray()));
+                        tuple.addAll(rowContext.getKeyColumnObjects());
+                        result.add(new Tuple2<>(tuple, rowContext.getValueColumnObjects().toArray()));
                     }
                     return result.iterator();
                 });
@@ -441,57 +393,68 @@ public final class SparkDpp implements java.io.Serializable {
         return resultPairRDD;
     }
 
-    private StructType constructSrcSchema(EtlJobConfig.EtlFileGroup fileGroup, EtlJobConfig.EtlIndex baseIndex) {
-        List<String> dataSrcColumns = fileGroup.fileFieldNames;
-        if (dataSrcColumns == null) {
-            // if there is no source columns info
-            // use base index columns as source columns
-            dataSrcColumns = new ArrayList<>();
-            for (EtlJobConfig.EtlColumn column : baseIndex.columns) {
-                dataSrcColumns.add(column.columnName);
+    public class RowContext {
+        private List<Object> keyColumnObjects = new ArrayList<>();
+        private List<Object> valueColumnObjects = new ArrayList<>();
+        private List<Object> allColumnObjects = new ArrayList<>();
+
+        public RowContext() {}
+
+        public RowContext(List<Object> keyColumnObjects,
+                          List<Object> valueColumnObjects,
+                          List<Object> allColumnObjects) {
+            this.keyColumnObjects = keyColumnObjects;
+            this.valueColumnObjects = valueColumnObjects;
+            this.allColumnObjects = allColumnObjects;
+        }
+
+        public List<Object> getKeyColumnObjects() {
+            return keyColumnObjects;
+        }
+
+        public List<Object> getValueColumnObjects() {
+            return valueColumnObjects;
+        }
+
+        public List<Object> getAllColumnObjects() {
+            return allColumnObjects;
+        }
+
+        public boolean processRow(List<String> columnNames,
+                                  InternalRow row,
+                                  StructType tableSchema,
+                                  EtlJobConfig.EtlIndex baseIndex,
+                                  List<ColumnParser> parsers,
+                                  boolean isKey) {
+            for (int i = 0; i < columnNames.size(); i++) {
+                String columnName = columnNames.get(i);
+                Object columnObject = row.get((int) tableSchema.getFieldIndex(columnName).get(),
+                        tableSchema.apply(columnName).dataType());
+                if (!validateData(columnObject, baseIndex.getColumn(columnName), parsers.get(i), row)) {
+                    return false;
+                }
+                columnObject = convertToJavaType(columnObject, tableSchema.apply(columnName).dataType());
+                if (isKey) {
+                    keyColumnObjects.add(columnObject);
+                } else {
+                    valueColumnObjects.add(columnObject);
+                }
+                allColumnObjects.add(columnObject);
             }
+            return true;
         }
-        List<String> srcColumnsWithColumnsFromPath = new ArrayList<>();
-        srcColumnsWithColumnsFromPath.addAll(dataSrcColumns);
-        if (fileGroup.columnsFromPath != null) {
-            srcColumnsWithColumnsFromPath.addAll(fileGroup.columnsFromPath);
-        }
-        return createSrcSchema(srcColumnsWithColumnsFromPath);
     }
 
-    private StructType createSrcSchema(List<String> srcColumns) {
-        List<StructField> fields = new ArrayList<>();
-        for (String srcColumn : srcColumns) {
-            // user StringType to load source data
-            StructField field = DataTypes.createStructField(srcColumn, DataTypes.StringType, true);
-            fields.add(field);
+    private Object convertToJavaType(Object value, DataType dataType) {
+        if (value instanceof UTF8String && dataType == StringType) {
+            return ((UTF8String) value).toString();
         }
-        StructType srcSchema = DataTypes.createStructType(fields);
-        return srcSchema;
-    }
-
-    // This method is to keep the splitting consistent with broker load / mini load
-    private String[] splitLine(String line, char sep) {
-        if (line == null || line.isEmpty()) {
-            return new String[0];
-        }
-        int index = 0;
-        int lastIndex = 0;
-        // line-begin char and line-end char are considered to be 'delimeter'
-        List<String> values = new ArrayList<>();
-        for (int i = 0; i < line.length(); i++, index++) {
-            if (line.charAt(index) == sep) {
-                values.add(line.substring(lastIndex, index));
-                lastIndex = index + 1;
-            }
-        }
-        values.add(line.substring(lastIndex, index));
-        return values.toArray(new String[0]);
+        return value;
     }
 
     // partition keys will be parsed into double from json
     // so need to convert it to partition columns' type
-    private Object convertPartitionKey(Object srcValue, Class dstClass) throws SparkDppException {
+    private Object convertPartitionKey(Object srcValue, Class dstClass) throws SparkWriteSDKException {
         if (dstClass.equals(Float.class) || dstClass.equals(Double.class)) {
             return null;
         }
@@ -523,7 +486,7 @@ public final class SparkDpp implements java.io.Serializable {
             }
         } else {
             LOG.warn("unsupport partition key:" + srcValue);
-            throw new SparkDppException("unsupport partition key:" + srcValue);
+            throw new SparkWriteSDKException("unsupport partition key:" + srcValue);
         }
     }
 
@@ -553,7 +516,7 @@ public final class SparkDpp implements java.io.Serializable {
     }
 
     public List<StarRocksRangePartitioner.PartitionRangeKey> createPartitionRangeKeys(
-            EtlJobConfig.EtlPartitionInfo partitionInfo, List<Class> partitionKeySchema) throws SparkDppException {
+            EtlJobConfig.EtlPartitionInfo partitionInfo, List<Class> partitionKeySchema) throws SparkWriteSDKException {
         List<StarRocksRangePartitioner.PartitionRangeKey> partitionRangeKeys = new ArrayList<>();
         for (EtlJobConfig.EtlPartition partition : partitionInfo.partitions) {
             StarRocksRangePartitioner.PartitionRangeKey partitionRangeKey =

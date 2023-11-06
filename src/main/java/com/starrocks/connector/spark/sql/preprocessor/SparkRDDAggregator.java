@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark.sql.preprocessor;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
@@ -26,12 +26,7 @@ import org.apache.spark.api.java.function.Function2;
 import org.apache.spark.api.java.function.PairFunction;
 import scala.Tuple2;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.io.Serializable;
+import java.io.*;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -55,7 +50,7 @@ public abstract class SparkRDDAggregator<T> implements Serializable {
         return value;
     }
 
-    public static SparkRDDAggregator buildAggregator(EtlJobConfig.EtlColumn column) throws SparkDppException {
+    public static SparkRDDAggregator buildAggregator(EtlJobConfig.EtlColumn column) throws SparkWriteSDKException {
         String aggType = StringUtils.lowerCase(column.aggregationType);
         String columnType = StringUtils.lowerCase(column.columnType);
         switch (aggType) {
@@ -84,7 +79,7 @@ public abstract class SparkRDDAggregator<T> implements Serializable {
                     case "largeint":
                         return new LargeIntMaxAggregator();
                     default:
-                        throw new SparkDppException(
+                        throw new SparkWriteSDKException(
                                 String.format("unsupported max aggregator for column type:%s", columnType));
                 }
             case "min":
@@ -108,7 +103,7 @@ public abstract class SparkRDDAggregator<T> implements Serializable {
                     case "largeint":
                         return new LargeIntMinAggregator();
                     default:
-                        throw new SparkDppException(
+                        throw new SparkWriteSDKException(
                                 String.format("unsupported min aggregator for column type:%s", columnType));
                 }
             case "sum":
@@ -133,7 +128,7 @@ public abstract class SparkRDDAggregator<T> implements Serializable {
                     case "decimal128":
                         return new BigDecimalSumAggregator();
                     default:
-                        throw new SparkDppException(
+                        throw new SparkWriteSDKException(
                                 String.format("unsupported sum aggregator for column type:%s", columnType));
                 }
             case "replace_if_not_null":
@@ -141,7 +136,7 @@ public abstract class SparkRDDAggregator<T> implements Serializable {
             case "replace":
                 return new ReplaceAggregator();
             default:
-                throw new SparkDppException(String.format("unsupported aggregate type %s", aggType));
+                throw new SparkWriteSDKException(String.format("unsupported aggregate type %s", aggType));
         }
     }
 

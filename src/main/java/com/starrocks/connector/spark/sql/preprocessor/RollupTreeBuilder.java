@@ -15,19 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark.sql.preprocessor;
 
-import com.esotericsoftware.kryo.Kryo;
-import org.apache.spark.serializer.KryoRegistrator;
-
-/**
- * register etl classes with Kryo when using Kryo serialization.
- */
-public class StarRocksKryoRegistrator implements KryoRegistrator {
-
-    @Override
-    public void registerClasses(Kryo kryo) {
-        kryo.register(Roaring64Map.class);
-        kryo.register(BitmapValue.class);
-    }
+// RollupTreeBuilder is used to get the RollupTree from the TableMeta
+public abstract interface RollupTreeBuilder {
+    public RollupTreeNode build(EtlJobConfig.EtlTable tableMeta);
 }

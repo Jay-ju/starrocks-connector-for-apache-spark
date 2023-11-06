@@ -91,7 +91,7 @@ public class Field {
     }
 
     public boolean getIsKey() {
-        return isKey.equalsIgnoreCase("true");
+        return isKey != null && isKey.equalsIgnoreCase("true");
     }
 
     public void setIsKey(String isKey) {

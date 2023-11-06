@@ -1,4 +1,4 @@
-// Copyright 2021-present StarRocks, Inc. All rights reserved.
+// Modifications Copyright 2021 StarRocks Limited.
 //
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
@@ -19,13 +19,23 @@
 
 package com.starrocks.connector.spark.sql.write;
 
-import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.connector.write.DataWriter;
+public class TransactionContext {
+    private String label;
+    private long txnId;
 
-import java.io.Serializable;
+    public TransactionContext() {
+    }
 
-public abstract class StarRocksWriter implements DataWriter<InternalRow>, Serializable {
-    void open() {
+    public TransactionContext(String label, long txnId) {
+        this.label = label;
+        this.txnId = txnId;
+    }
 
+    public String getLabel() {
+        return label;
+    }
+
+    public long getTxnId() {
+        return txnId;
     }
 }

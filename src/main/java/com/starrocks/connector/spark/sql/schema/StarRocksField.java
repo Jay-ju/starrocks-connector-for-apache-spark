@@ -19,7 +19,9 @@
 
 package com.starrocks.connector.spark.sql.schema;
 
-public class StarRocksField {
+import java.io.Serializable;
+
+public class StarRocksField implements Serializable {
 
     public static final StarRocksField __OP = new StarRocksField("__op", "tinyint", Integer.MAX_VALUE, "3", null);
 

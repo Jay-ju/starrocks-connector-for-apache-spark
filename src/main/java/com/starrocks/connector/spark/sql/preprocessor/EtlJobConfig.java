@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark.sql.preprocessor;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
@@ -25,13 +25,15 @@ import com.google.gson.FieldAttributes;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.annotations.SerializedName;
+import com.starrocks.format.Column;
+import com.starrocks.proto.TabletSchema;
+import com.starrocks.proto.Types;
 import lombok.Data;
 
 import java.io.Serializable;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-
 /**
  * jobconfig.json file format
  * {
@@ -131,6 +133,7 @@ import java.util.Map;
  * "version": "V1"
  * }
  */
+
 @Data
 public class EtlJobConfig implements Serializable {
     // global dict
@@ -288,6 +291,30 @@ public class EtlJobConfig implements Serializable {
             fileGroups.add(etlFileGroup);
         }
 
+        public TabletSchema.TabletSchemaPB convert() {
+            TabletSchema.TabletSchemaPB.Builder builder = TabletSchema.TabletSchemaPB.newBuilder()
+                    //fake TODO
+                    .setId(indexes.get(0).indexId)
+                    .setKeysType(convert(indexes.get(0).indexType))
+                    .setCompressionType(Types.CompressionTypePB.LZ4_FRAME);
+            final int uniqueId = 0;
+            for(int idx = 0; idx < indexes.get(0).getColumns().size(); idx++) {
+                EtlColumn col = indexes.get(0).getColumns().get(idx);
+                builder.addColumn(col.convert(idx));
+            }
+            return builder.build();
+        }
+
+        TabletSchema.KeysType convert(String indexType) {
+            switch (indexType) {
+                case "DUPLICATE" : return TabletSchema.KeysType.DUP_KEYS;
+                case "AGGREGATE" : return TabletSchema.KeysType.AGG_KEYS;
+                case "UNIQUE": return TabletSchema.KeysType.UNIQUE_KEYS;
+                case "PRIMARY" : return TabletSchema.KeysType.PRIMARY_KEYS;
+                default: throw new RuntimeException("not support type" + indexType);
+            }
+        }
+
         @Override
         public String toString() {
             return "EtlTable{" +
@@ -299,6 +326,7 @@ public class EtlJobConfig implements Serializable {
     }
 
     public static class EtlColumn implements Serializable {
+        static int index = 0;
         @SerializedName(value = "columnName")
         public String columnName;
         @SerializedName(value = "columnType")
@@ -336,6 +364,21 @@ public class EtlJobConfig implements Serializable {
             this.precision = precision;
             this.scale = scale;
             this.defineExpr = null;
+        }
+
+        TabletSchema.ColumnPB convert(int uniqueId) {
+
+            return TabletSchema.ColumnPB.newBuilder()
+                    .setName(columnName)
+                    // fake TODO check
+                    .setUniqueId(uniqueId)
+                    .setIsKey(isKey)
+                    .setIsNullable(isAllowNull)
+                    .setType(columnType)
+                    .setLength(stringLength)
+                    .setIndexLength(stringLength)
+                    .setAggregation(null == aggregationType ? "NONE" : aggregationType)
+                    .build();
         }
 
         @Override
@@ -462,18 +505,14 @@ public class EtlJobConfig implements Serializable {
         public boolean isMaxPartition;
         @SerializedName(value = "bucketNum")
         public int bucketNum;
+        @SerializedName(value = "storagePath")
+        public String storagePath;
+        @SerializedName(value = "tabletIds")
+        public List<Long> tabletIds;
+        @SerializedName(value = "backendIds")
+        public List<Long> backendIds;
 
         public EtlPartition() {
-        }
-
-        public EtlPartition(long partitionId, List<Object> startKeys, List<Object> endKeys,
-                            boolean isMinPartition, boolean isMaxPartition, int bucketNum) {
-            this.partitionId = partitionId;
-            this.startKeys = startKeys;
-            this.endKeys = endKeys;
-            this.isMinPartition = isMinPartition;
-            this.isMaxPartition = isMaxPartition;
-            this.bucketNum = bucketNum;
         }
 
         @Override
@@ -485,6 +524,7 @@ public class EtlJobConfig implements Serializable {
                     ", isMinPartition=" + isMinPartition +
                     ", isMaxPartition=" + isMaxPartition +
                     ", bucketNum=" + bucketNum +
+                    ", storagePath=" + storagePath +
                     '}';
         }
     }

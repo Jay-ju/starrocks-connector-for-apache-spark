@@ -19,8 +19,8 @@
 
 package com.starrocks.connector.spark.sql.write;
 
+import com.starrocks.connector.spark.rest.models.TabletCommitInfo;
 import com.starrocks.data.load.stream.StreamLoadSnapshot;
-
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 
 import java.util.Objects;
@@ -31,16 +31,22 @@ public class StarRocksWriterCommitMessage implements WriterCommitMessage {
     private final long taskId;
     private final long epochId;
 
-    private final StreamLoadSnapshot snapshot;
+    private StreamLoadSnapshot snapshot;
+    private TabletCommitInfo tabletCommitInfo;
+    private final long txnId;
 
     public StarRocksWriterCommitMessage(int partitionId,
                                         long taskId,
                                         long epochId,
-                                        StreamLoadSnapshot snapshot) {
+                                        StreamLoadSnapshot snapshot,
+                                        TabletCommitInfo tabletCommitInfo,
+                                        long txnId) {
         this.partitionId = partitionId;
         this.taskId = taskId;
         this.epochId = epochId;
         this.snapshot = snapshot;
+        this.tabletCommitInfo = tabletCommitInfo;
+        this.txnId = txnId;
     }
 
     public int getPartitionId() {
@@ -57,6 +63,14 @@ public class StarRocksWriterCommitMessage implements WriterCommitMessage {
 
     public StreamLoadSnapshot getSnapshot() {
         return snapshot;
+    }
+
+    public TabletCommitInfo getTabletCommitInfo() {
+        return tabletCommitInfo;
+    }
+
+    public long getTxnId() {
+        return txnId;
     }
 
     @Override

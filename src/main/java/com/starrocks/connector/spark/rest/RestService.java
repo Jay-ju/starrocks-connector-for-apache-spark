@@ -20,9 +20,12 @@
 package com.starrocks.connector.spark.rest;
 
 import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.starrocks.connector.spark.cfg.ConfigurationOptions;
 import com.starrocks.connector.spark.cfg.Settings;
 import com.starrocks.connector.spark.exception.ConnectedFailedException;
@@ -32,6 +35,9 @@ import com.starrocks.connector.spark.exception.StarrocksException;
 import com.starrocks.connector.spark.rest.models.QueryPlan;
 import com.starrocks.connector.spark.rest.models.Schema;
 import com.starrocks.connector.spark.rest.models.Tablet;
+import com.starrocks.connector.spark.rest.models.TabletCommitInfo;
+import com.starrocks.connector.spark.sql.preprocessor.EtlJobConfig;
+import com.starrocks.connector.spark.sql.write.TransactionContext;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpStatus;
 import org.apache.http.auth.AuthenticationException;
@@ -48,6 +54,7 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -79,10 +86,21 @@ import static com.starrocks.connector.spark.util.ErrorMessages.SHOULD_NOT_HAPPEN
  * Service for communicate with StarRocks FE.
  */
 public class RestService implements Serializable {
+    private static Logger LOG = LoggerFactory.getLogger(RestService.class);
+
     public final static int REST_RESPONSE_STATUS_OK = 200;
     private static final String API_PREFIX = "/api";
     private static final String SCHEMA = "_schema";
     private static final String QUERY_PLAN = "_query_plan";
+
+    // Transaction
+    private static final String TXN_OP_KEY = "txn_op";
+    private static final String TXN_BEGIN = "begin";
+    public static final String TXN_PREPARE = "prepare";
+    public static final String TXN_COMMIT = "commit";
+    private static final String TXN_ROLLBACK = "rollback";
+    private static final String TIMEOUT_KEY = "timeout";
+    private static final String TXN_ID = "txn_id";
 
     /**
      * send request to StarRocks FE and get response json string.
@@ -117,6 +135,10 @@ public class RestService implements Serializable {
         HttpClientContext context = HttpClientContext.create();
         try {
             request.addHeader(new BasicScheme().authenticate(creds, request, context));
+            request.addHeader("db", cfg.getProperty("db"));
+            request.addHeader("table", cfg.getProperty("table"));
+            request.addHeader("txn_id", cfg.getProperty("txn_id"));
+            request.addHeader("label", cfg.getProperty("label"));
         } catch (AuthenticationException e) {
             logger.error(CONNECT_FAILED_MESSAGE, request.getURI(), e);
             throw new ConnectedFailedException(request.getURI().toString(), -1, e);
@@ -199,14 +221,21 @@ public class RestService implements Serializable {
      * get a valid URI to connect StarRocks FE.
      *
      * @param cfg    configuration of request
-     * @param logger {@link Logger}
      * @return uri string
      * @throws IllegalArgumentException throw when configuration is illegal
      */
     @VisibleForTesting
-    static String getUriStr(Settings cfg, Logger logger) throws IllegalArgumentException {
-        String[] identifier = parseIdentifier(cfg.getProperty(STARROCKS_TABLE_IDENTIFIER), logger);
-        String endPoint = randomEndpoint(cfg.getProperty(STARROCKS_FENODES), logger);
+    static String getTransUriStr(String operator, Settings cfg) throws IllegalArgumentException {
+        String endPoint = randomEndpoint(cfg.getProperty(STARROCKS_FENODES), LOG);
+        if (!endPoint.startsWith("http")) {
+            endPoint = "http://" + endPoint;
+        }
+        return endPoint + API_PREFIX + "/transaction/spark/" + operator;
+    }
+
+    static String getSchemaUriStr(Settings cfg) throws IllegalArgumentException {
+        String[] identifier = parseIdentifier(cfg.getProperty(STARROCKS_TABLE_IDENTIFIER), LOG);
+        String endPoint = randomEndpoint(cfg.getProperty(STARROCKS_FENODES), LOG);
         if (!endPoint.startsWith("http")) {
             endPoint = "http://" + endPoint;
         }
@@ -224,7 +253,7 @@ public class RestService implements Serializable {
     public static Schema getSchema(Settings cfg, Logger logger)
             throws StarrocksException {
         logger.trace("Finding schema.");
-        HttpGet httpGet = new HttpGet(getUriStr(cfg, logger) + SCHEMA);
+        HttpGet httpGet = new HttpGet(getSchemaUriStr(cfg) + SCHEMA);
         String response = send(cfg, httpGet, logger);
         logger.debug("Find schema response is '{}'.", response);
         return parseSchema(response, logger);
@@ -242,6 +271,7 @@ public class RestService implements Serializable {
     public static Schema parseSchema(String response, Logger logger) throws StarrocksException {
         logger.trace("Parse response '{}' to schema.", response);
         ObjectMapper mapper = new ObjectMapper();
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         Schema schema;
         try {
             schema = mapper.readValue(response, Schema.class);
@@ -273,6 +303,68 @@ public class RestService implements Serializable {
         return schema;
     }
 
+
+    public static TransactionContext beginTransation(Settings cfg) {
+        LOG.trace("beginTransation.");
+
+        HttpPost httpPost = new HttpPost(getTransUriStr(TXN_BEGIN, cfg));
+        String entity = "{\"sql\": \" no need \"}";
+        LOG.debug("Post body Sending to StarRocks FE is: '{}'.", entity);
+        StringEntity stringEntity = new StringEntity(entity, StandardCharsets.UTF_8);
+        stringEntity.setContentEncoding("UTF-8");
+        stringEntity.setContentType("application/json");
+        httpPost.setEntity(stringEntity);
+
+        String resStr = send(cfg, httpPost, LOG);
+        LOG.debug("Find partition response is '{}'.", resStr);
+        return parseResp(resStr, TransactionContext.class);
+    }
+
+    public static TransactionContext preOrCommitTransaction(Settings cfg,
+                                                            List<TabletCommitInfo> tabletCommits,
+                                                            String operator) {
+        LOG.trace("preCommitTransaction.");
+
+        HttpPost httpPost = new HttpPost(getTransUriStr(operator, cfg));
+        GsonBuilder gsonBuilder = new GsonBuilder();
+        gsonBuilder.addDeserializationExclusionStrategy(new EtlJobConfig.HiddenAnnotationExclusionStrategy());
+        Gson gson = gsonBuilder.create();
+        LOG.debug("Post body Sending to StarRocks FE is: '{}'.", gson.toJson(tabletCommits));
+        StringEntity stringEntity = new StringEntity(gson.toJson(tabletCommits), StandardCharsets.UTF_8);
+        stringEntity.setContentEncoding("UTF-8");
+        stringEntity.setContentType("application/json");
+        httpPost.setEntity(stringEntity);
+
+        String resStr = send(cfg, httpPost, LOG);
+        LOG.debug("Find partition response is '{}'.", resStr);
+        return parseResp(resStr, TransactionContext.class);
+    }
+
+    public static Schema getShardInfo(Settings cfg) {
+        LOG.trace("getShardInfo.");
+        HttpGet httpGet = new HttpGet(getSchemaUriStr(cfg));
+
+        String entity = "{\"sql\": \" no need \"}";
+        LOG.debug("get Sending to StarRocks FE is: '{}'.", entity);
+        StringEntity stringEntity = new StringEntity(entity, StandardCharsets.UTF_8);
+        stringEntity.setContentEncoding("UTF-8");
+        stringEntity.setContentType("application/json");
+
+        String resStr = send(cfg, httpGet, LOG);
+        LOG.debug("Find partition response is '{}'.", resStr);
+        return parseResp(resStr, Schema.class);
+    }
+
+    static <T> T parseResp(String resp, Class<T> clazz) {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        try {
+            return mapper.readValue(resp, clazz);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     /**
      * find StarRocks RDD partitions from StarRocks FE.
      *
@@ -290,7 +382,7 @@ public class RestService implements Serializable {
         }
         logger.debug("Query SQL Sending to StarRocks FE is: '{}'.", sql);
 
-        HttpPost httpPost = new HttpPost(getUriStr(cfg, logger) + QUERY_PLAN);
+        HttpPost httpPost = new HttpPost(getSchemaUriStr(cfg) + QUERY_PLAN);
         String entity = "{\"sql\": \"" + sql + "\"}";
         logger.debug("Post body Sending to StarRocks FE is: '{}'.", entity);
         StringEntity stringEntity = new StringEntity(entity, StandardCharsets.UTF_8);

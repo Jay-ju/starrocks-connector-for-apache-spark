@@ -28,17 +28,15 @@ import com.starrocks.data.load.stream.StreamLoadManager;
 import com.starrocks.data.load.stream.StreamLoadSnapshot;
 import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.Serializable;
 
-public class StarRocksDataWriter extends StarRocksWriter {
-    private static final Logger log = LoggerFactory.getLogger(StarRocksDataWriter.class);
+public class StarRocksStreamloadWriter extends StarRocksWriter {
+    private static final Logger log = LoggerFactory.getLogger(StarRocksStreamloadWriter.class);
 
     private final WriteStarRocksConfig config;
     private final int partitionId;
@@ -47,11 +45,11 @@ public class StarRocksDataWriter extends StarRocksWriter {
     private final RowStringConverter converter;
     private final StreamLoadManager manager;
 
-    public StarRocksDataWriter(WriteStarRocksConfig config,
-                               StructType schema,
-                               int partitionId,
-                               long taskId,
-                               long epochId) {
+    public StarRocksStreamloadWriter(WriteStarRocksConfig config,
+                                     StructType schema,
+                                     int partitionId,
+                                     long taskId,
+                                     long epochId) {
         this.config = config;
         this.partitionId = partitionId;
         this.taskId = taskId;
@@ -88,7 +86,7 @@ public class StarRocksDataWriter extends StarRocksWriter {
         log.info("partitionId: {}, taskId: {}, epochId: {} commit", partitionId, taskId, epochId);
         try {
             manager.flush();
-            return new StarRocksWriterCommitMessage(partitionId, taskId, epochId, null);
+            return new StarRocksWriterCommitMessage(partitionId, taskId, epochId, null, null, -1L);
         } catch (Exception e) {
             String errMsg = String.format("Failed to commit, partitionId: %s, taskId: %s, epochId: %s",
                     partitionId, taskId, epochId);

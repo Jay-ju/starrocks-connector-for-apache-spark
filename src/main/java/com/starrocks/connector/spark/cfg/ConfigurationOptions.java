@@ -21,7 +21,9 @@ package com.starrocks.connector.spark.cfg;
 
 import com.google.common.collect.ImmutableSet;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.spark.SparkConf;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -78,10 +80,11 @@ public interface ConfigurationOptions {
 
     static Map<String, String> makeWriteCompatibleWithRead(Map<String, String> options) {
         // user and password compatible
-        processSameCompatible(ImmutableSet.of(STARROCKS_USER, STARROCKS_REQUEST_AUTH_USER, "user"), options);
-        processSameCompatible(ImmutableSet.of(STARROCKS_PASSWORD, STARROCKS_REQUEST_AUTH_PASSWORD, "password"), options);
-        processSameCompatible(ImmutableSet.of(STARROCKS_FENODES, KEY_FE_HTTP), options);
-        return options;
+        Map<String, String> configMap = new HashMap(options);
+        processSameCompatible(ImmutableSet.of(STARROCKS_USER, STARROCKS_REQUEST_AUTH_USER, "user"), configMap);
+        processSameCompatible(ImmutableSet.of(STARROCKS_PASSWORD, STARROCKS_REQUEST_AUTH_PASSWORD, "password"), configMap);
+        processSameCompatible(ImmutableSet.of(STARROCKS_FENODES, KEY_FE_HTTP), configMap);
+        return configMap;
     }
 
     static boolean processSameCompatible(Set<String> confCandidates, Map<String, String> options) {

@@ -20,6 +20,7 @@
 package com.starrocks.connector.spark.sql.write;
 
 import com.starrocks.connector.spark.sql.conf.WriteStarRocksConfig;
+import com.starrocks.connector.spark.sql.schema.StarRocksSchema;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
@@ -28,7 +29,7 @@ import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.starrocks.connector.spark.sql.conf.WriteStarRocksConfig.FOR_TEST_LOAD_WRITER;
+import static com.starrocks.connector.spark.sql.conf.WriteStarRocksConfig.FOR_TEST_RAW_WRITER;
 
 public class StarRocksWriterFactory implements DataWriterFactory, StreamingDataWriterFactory {
 
@@ -36,10 +37,14 @@ public class StarRocksWriterFactory implements DataWriterFactory, StreamingDataW
 
     private final StructType schema;
     private final WriteStarRocksConfig config;
+    private final StarRocksSchema starRocksSchema;
+    private final Long txnId;
 
-    public StarRocksWriterFactory(StructType schema, WriteStarRocksConfig config) {
+    public StarRocksWriterFactory(StructType schema, WriteStarRocksConfig config, StarRocksSchema starRocksSchema, Long txnId) {
         this.schema = schema;
         this.config = config;
+        this.starRocksSchema = starRocksSchema;
+        this.txnId = txnId;
     }
 
     @Override
@@ -54,8 +59,9 @@ public class StarRocksWriterFactory implements DataWriterFactory, StreamingDataW
 
     private DataWriter createAndOpenWriter(int partitionId, long taskId, long epochId) {
         //TODO here can change write mode
-        StarRocksWriter writer = FOR_TEST_LOAD_WRITER ? new StarRocksDppWriter(config, partitionId, taskId, epochId) :
-        new StarRocksDataWriter(config, schema, partitionId, taskId, epochId);
+        StarRocksWriter writer = FOR_TEST_RAW_WRITER ?
+                new StarRocksRawWriter(config, starRocksSchema, partitionId, taskId, epochId, txnId) :
+                new StarRocksStreamloadWriter(config, schema, partitionId, taskId, epochId);
         try {
             writer.open();
         } catch (Exception e) {

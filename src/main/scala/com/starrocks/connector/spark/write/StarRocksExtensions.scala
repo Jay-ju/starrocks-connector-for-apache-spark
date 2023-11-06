@@ -1,3 +1,5 @@
+// Modifications Copyright 2021 StarRocks Limited.
+//
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -15,25 +17,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark
 
-import com.google.common.base.Strings;
+import com.starrocks.connector.spark.write.StarRocksWriteStrategy
+import org.apache.spark.sql.SparkSessionExtensions
 
-// Exception for Spark DPP process
-public class SparkDppException extends Exception {
-    public SparkDppException(String msg, Throwable cause) {
-        super(Strings.nullToEmpty(msg), cause);
-    }
-
-    public SparkDppException(Throwable cause) {
-        super(cause);
-    }
-
-    public SparkDppException(String msg, Throwable cause, boolean enableSuppression, boolean writableStackTrace) {
-        super(Strings.nullToEmpty(msg), cause, enableSuppression, writableStackTrace);
-    }
-
-    public SparkDppException(String msg) {
-        super(Strings.nullToEmpty(msg));
-    }
+class StarRocksExtensions extends (SparkSessionExtensions => Unit) {
+  override def apply(extensions: SparkSessionExtensions): Unit = {
+    extensions.injectPlannerStrategy(StarRocksWriteStrategy)
+  }
 }
+
+

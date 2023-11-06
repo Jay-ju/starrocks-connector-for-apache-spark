@@ -19,15 +19,16 @@
 
 package com.starrocks.connector.spark.sql.schema;
 
-import com.starrocks.connector.spark.sql.dpp.EtlJobConfig;
+import com.starrocks.connector.spark.sql.preprocessor.EtlJobConfig;
 
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static com.starrocks.connector.spark.sql.schema.StarRocksField.__OP;
 
-public class StarRocksSchema {
+public class StarRocksSchema implements Serializable {
     private List<StarRocksField> columns;
     private List<StarRocksField> pks;
     private Map<String, StarRocksField> columnMap;

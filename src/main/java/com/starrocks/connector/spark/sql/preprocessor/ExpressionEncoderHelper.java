@@ -17,10 +17,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark.sql.preprocessor;
 
-import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder;
+import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
 
 import java.io.Serializable;
 import java.lang.reflect.InvocationTargetException;
@@ -60,10 +60,10 @@ public class ExpressionEncoderHelper implements Serializable {
         }
     }
 
-    public InternalRow toRow(Object obj) {
+    public UnsafeRow toRow(Object obj) {
         initMethodIfNeeded();
         try {
-            return (InternalRow) toRowMethod.invoke(instance, obj);
+            return (UnsafeRow) toRowMethod.invoke(instance, obj);
         } catch (IllegalAccessException | InvocationTargetException e) {
             throw new RuntimeException(e);
         }

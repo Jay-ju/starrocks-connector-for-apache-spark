@@ -1,5 +1,3 @@
-// Copyright 2021-present StarRocks, Inc. All rights reserved.
-//
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -17,15 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.write;
+package com.starrocks.connector.spark.sql.preprocessor;
 
-import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.connector.write.DataWriter;
+import com.esotericsoftware.kryo.Kryo;
+import org.apache.spark.serializer.KryoRegistrator;
 
-import java.io.Serializable;
+/**
+ * register etl classes with Kryo when using Kryo serialization.
+ */
+public class StarRocksKryoRegistrator implements KryoRegistrator {
 
-public abstract class StarRocksWriter implements DataWriter<InternalRow>, Serializable {
-    void open() {
-
+    @Override
+    public void registerClasses(Kryo kryo) {
+        kryo.register(Roaring64Map.class);
+        kryo.register(BitmapValue.class);
     }
 }

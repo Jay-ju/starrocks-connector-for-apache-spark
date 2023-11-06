@@ -20,10 +20,10 @@
 package com.starrocks.connector.spark.sql;
 
 import com.starrocks.connector.spark.cfg.PropertiesSettings;
-import com.starrocks.connector.spark.dpp.StreamDppLoadSink;
 import com.starrocks.connector.spark.rest.models.Schema;
 import com.starrocks.connector.spark.sql.conf.SimpleStarRocksConfig;
 import com.starrocks.connector.spark.sql.conf.StarRocksConfig;
+import com.starrocks.connector.spark.sql.schema.InferSchema;
 import com.starrocks.connector.spark.sql.schema.StarRocksField;
 import com.starrocks.connector.spark.sql.schema.StarRocksSchema;
 import org.apache.commons.lang3.StringUtils;
@@ -32,17 +32,17 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.SaveMode;
 import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.execution.streaming.Sink;
+import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.catalog.TableProvider;
+import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.sources.BaseRelation;
 import org.apache.spark.sql.sources.CreatableRelationProvider;
 import org.apache.spark.sql.sources.DataSourceRegister;
 import org.apache.spark.sql.sources.RelationProvider;
-import org.apache.spark.sql.sources.StreamSinkProvider;
-import org.apache.spark.sql.streaming.OutputMode;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import scala.collection.Seq;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -56,9 +56,8 @@ import static com.starrocks.connector.spark.sql.StarRocksTable.identifierFullNam
 import static com.starrocks.connector.spark.sql.conf.StarRocksConfig.PREFIX;
 
 public class StarRocksDataSourceProvider implements RelationProvider,
-        DataSourceRegister,
-        StreamSinkProvider,
-        CreatableRelationProvider {
+        TableProvider,
+        DataSourceRegister {
 
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksDataSourceProvider.class);
 
@@ -78,28 +77,17 @@ public class StarRocksDataSourceProvider implements RelationProvider,
     }
 
     @Override
-    public BaseRelation createRelation(SQLContext sqlContext, SaveMode mode,
-                                       scala.collection.immutable.Map<String, String> parameters, Dataset<Row> data) {
-        if (starrocksSchema == null) {
-            Map<String, String> mutableParams = new HashMap<>();
-            parameters.toStream().foreach(key -> mutableParams.put(key._1, key._2));
-            SimpleStarRocksConfig config = new SimpleStarRocksConfig(makeWriteCompatibleWithRead(mutableParams));
-            starrocksSchema = getStarRocksSchema(config);
-        }
-        StreamDppLoadSink writer = new StreamDppLoadSink(sqlContext, starrocksSchema);
-        writer.write(data);
+    public StructType inferSchema(CaseInsensitiveStringMap options) {
+        SimpleStarRocksConfig config = new SimpleStarRocksConfig(makeWriteCompatibleWithRead(options));
+        starrocksSchema = getStarRocksSchema(config);
+        return InferSchema.inferSchema(starrocksSchema, config);
+    }
 
-        return new BaseRelation() {
-            @Override
-            public SQLContext sqlContext() {
-                return null;
-            }
-
-            @Override
-            public StructType schema() {
-                return null;
-            }
-        };
+    @Override
+    public Table getTable(StructType schema, Transform[] partitioning, Map<String, String> properties) {
+        SimpleStarRocksConfig config = new SimpleStarRocksConfig(makeWriteCompatibleWithRead(properties));
+        starrocksSchema = getStarRocksSchema(config);
+        return new StarRocksTable(schema, starrocksSchema, config);
     }
 
     @Override
@@ -107,7 +95,7 @@ public class StarRocksDataSourceProvider implements RelationProvider,
         return "starrocks";
     }
 
-    //TODO 将所有转换的逻辑统一
+    //TODO schema only use
     private static StarRocksSchema convert(Schema schema) {
         List<StarRocksField> columns = new ArrayList<>();
         List<StarRocksField> pks = new ArrayList<>();
@@ -160,12 +148,4 @@ public class StarRocksDataSourceProvider implements RelationProvider,
         });
         return properties;
     }
-
-    @Override
-    public Sink createSink(SQLContext sqlContext, scala.collection.immutable.Map<String, String> parameters,
-                           Seq<String> partitionColumns, OutputMode outputMode) {
-        return new StreamDppLoadSink(sqlContext, starrocksSchema);
-    }
-
-
 }

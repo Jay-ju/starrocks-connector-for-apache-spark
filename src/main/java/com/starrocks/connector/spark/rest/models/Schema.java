@@ -19,7 +19,7 @@
 
 package com.starrocks.connector.spark.rest.models;
 
-import com.starrocks.connector.spark.sql.dpp.EtlJobConfig;
+import com.starrocks.connector.spark.sql.preprocessor.EtlJobConfig;
 
 import java.util.ArrayList;
 import java.util.List;

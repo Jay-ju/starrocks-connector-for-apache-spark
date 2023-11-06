@@ -26,11 +26,7 @@ import com.starrocks.connector.spark.sql.conf.StarRocksConfig;
 import com.starrocks.connector.spark.sql.conf.WriteStarRocksConfig;
 import com.starrocks.connector.spark.sql.schema.StarRocksSchema;
 import com.starrocks.connector.spark.sql.write.StarRocksWriteBuilder;
-import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.SupportsRead;
-import org.apache.spark.sql.connector.catalog.SupportsWrite;
-import org.apache.spark.sql.connector.catalog.Table;
-import org.apache.spark.sql.connector.catalog.TableCapability;
+import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
@@ -43,12 +39,13 @@ import java.util.Map;
 import java.util.Set;
 
 import static com.starrocks.connector.spark.cfg.ConfigurationOptions.STARROCKS_TABLE_IDENTIFIER;
+import static com.starrocks.connector.spark.cfg.ConfigurationOptions.makeWriteCompatibleWithRead;
 
 public class StarRocksTable implements Table, SupportsWrite, SupportsRead {
     private final StructType schema;
     private final StarRocksSchema starRocksSchema;
     private final StarRocksConfig config;
-    private final Identifier identifier;
+    private Identifier identifier;
 
     public StarRocksTable(StructType schema, StarRocksSchema starRocksSchema, StarRocksConfig config, Identifier identifier) {
         this.schema = schema;
@@ -57,12 +54,19 @@ public class StarRocksTable implements Table, SupportsWrite, SupportsRead {
         this.identifier = identifier;
     }
 
+    public StarRocksTable(StructType schema, StarRocksSchema starRocksSchema, StarRocksConfig config) {
+        this.schema = schema;
+        this.starRocksSchema = starRocksSchema;
+        this.config = config;
+    }
+
     @Override
     public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
         PropertiesSettings properties = addTableInfoForOptions(config.getOriginOptions());
         WriteStarRocksConfig writeConfig = new WriteStarRocksConfig(properties.getPropertyMap(), schema, starRocksSchema);
         checkWriteParameter(writeConfig);
-        return new StarRocksWriteBuilder(info, writeConfig);
+
+        return new StarRocksWriteBuilder(info, writeConfig, starRocksSchema);
     }
 
     @Override
@@ -94,7 +98,7 @@ public class StarRocksTable implements Table, SupportsWrite, SupportsRead {
 
     @Override
     public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-        PropertiesSettings properties = addTableInfoForOptions(options);
+        PropertiesSettings properties = addTableInfoForOptions(options.asCaseSensitiveMap());
         return new StarRocksScanBuilder(schema, properties);
     }
 
@@ -105,7 +109,8 @@ public class StarRocksTable implements Table, SupportsWrite, SupportsRead {
     private PropertiesSettings addTableInfoForOptions(Map<String, String> options) {
         PropertiesSettings properties = new PropertiesSettings();
         options.forEach((k, v) -> properties.setProperty(k, v));
-        config.getOriginOptions().forEach((k, v) -> properties.setProperty(k, v));
+        Map<String, String> configMap = makeWriteCompatibleWithRead(config.getOriginOptions());
+        configMap.forEach((k, v) -> properties.setProperty(k, v));
         if (properties.getProperty(STARROCKS_TABLE_IDENTIFIER) == null){
             properties.setProperty(STARROCKS_TABLE_IDENTIFIER, identifierFullName(identifier));
         }

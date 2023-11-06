@@ -48,7 +48,7 @@ public class WriteStarRocksConfig extends StarRocksConfigBase {
     private static final long serialVersionUID = 1L;
 
     @VisibleForTesting
-    public static final boolean FOR_TEST_LOAD_WRITER = false;
+    public static final boolean FOR_TEST_RAW_WRITER = true;
 
     public static final String WRITE_PREFIX = PREFIX + "write.";
     // The prefix of the stream load label. Available values are within [-_A-Za-z0-9]

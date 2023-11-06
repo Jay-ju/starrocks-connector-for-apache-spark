@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark.sql.preprocessor;
 
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
@@ -34,7 +34,7 @@ public abstract class ColumnParser implements Serializable {
     public static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     public static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    public static ColumnParser create(EtlJobConfig.EtlColumn etlColumn) throws SparkDppException {
+    public static ColumnParser create(EtlJobConfig.EtlColumn etlColumn) throws SparkWriteSDKException {
         String columnType = etlColumn.columnType;
         if (columnType.equalsIgnoreCase("TINYINT")) {
             return new TinyIntParser();
@@ -67,7 +67,7 @@ public abstract class ColumnParser implements Serializable {
         } else if (columnType.equalsIgnoreCase("LARGEINT")) {
             return new LargeIntParser();
         } else {
-            throw new SparkDppException("unsupported type:" + columnType);
+            throw new SparkWriteSDKException("unsupported type:" + columnType);
         }
     }
 

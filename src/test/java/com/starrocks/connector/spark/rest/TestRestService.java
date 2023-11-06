@@ -114,7 +114,7 @@ public class TestRestService {
         settings.setProperty(STARROCKS_FENODES, "fe");
 
         String expected = "http://fe/api/a/b/";
-        Assert.assertEquals(expected, RestService.getUriStr(settings, logger));
+        Assert.assertEquals(expected, RestService.getSchemaUriStr(settings));
     }
 
     @Test

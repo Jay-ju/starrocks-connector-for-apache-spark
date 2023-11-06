@@ -15,10 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.connector.spark.sql.dpp;
+package com.starrocks.connector.spark.sql.preprocessor;
 
 import com.google.common.collect.Lists;
-import org.apache.spark.sql.Row;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.DecimalType;
@@ -66,7 +66,7 @@ public class DppUtils {
         return null;
     }
 
-    public static Class getClassFromColumn(EtlJobConfig.EtlColumn column) throws SparkDppException {
+    public static Class getClassFromColumn(EtlJobConfig.EtlColumn column) throws SparkWriteSDKException {
         switch (column.columnType) {
             case "BOOLEAN":
                 return Boolean.class;
@@ -80,7 +80,7 @@ public class DppUtils {
             case "BIGINT":
                 return Long.class;
             case "LARGEINT":
-                throw new SparkDppException("LARGEINT is not supported now");
+                throw new SparkWriteSDKException("LARGEINT is not supported now");
             case "FLOAT":
                 return Float.class;
             case "DOUBLE":
@@ -197,10 +197,11 @@ public class DppUtils {
         return buffer;
     }
 
-    public static long getHashValue(Row row, List<String> distributeColumns, StructType dstTableSchema) {
+    public static long getHashValue(InternalRow row, List<String> distributeColumns, StructType dstTableSchema) {
         CRC32 hashValue = new CRC32();
         for (String distColumn : distributeColumns) {
-            Object columnObject = row.get(row.fieldIndex(distColumn));
+            Object columnObject = row.get((int) dstTableSchema.getFieldIndex(distColumn).get(),
+                    dstTableSchema.apply(distColumn).dataType());
             ByteBuffer buffer = getHashValue(columnObject, dstTableSchema.apply(distColumn).dataType());
             hashValue.update(buffer.array(), 0, buffer.limit());
         }
@@ -224,7 +225,7 @@ public class DppUtils {
     }
 
     public static List<String> parseColumnsFromPath(String filePath, List<String> columnsFromPath)
-            throws SparkDppException {
+            throws SparkWriteSDKException {
         if (columnsFromPath == null || columnsFromPath.isEmpty()) {
             return Collections.emptyList();
         }
@@ -232,7 +233,7 @@ public class DppUtils {
         if (strings.length < 2) {
             System.err
                     .println("Fail to parse columnsFromPath, expected: " + columnsFromPath + ", filePath: " + filePath);
-            throw new SparkDppException(
+            throw new SparkWriteSDKException(
                     "Reason: Fail to parse columnsFromPath, expected: " + columnsFromPath + ", filePath: " + filePath);
         }
         String[] columns = new String[columnsFromPath.size()];
@@ -245,7 +246,7 @@ public class DppUtils {
             if (str == null || !str.contains("=")) {
                 System.err.println(
                         "Fail to parse columnsFromPath, expected: " + columnsFromPath + ", filePath: " + filePath);
-                throw new SparkDppException(
+                throw new SparkWriteSDKException(
                         "Reason: Fail to parse columnsFromPath, expected: " + columnsFromPath + ", filePath: " +
                                 filePath);
             }
@@ -253,7 +254,7 @@ public class DppUtils {
             if (pair.length != 2) {
                 System.err.println(
                         "Fail to parse columnsFromPath, expected: " + columnsFromPath + ", filePath: " + filePath);
-                throw new SparkDppException(
+                throw new SparkWriteSDKException(
                         "Reason: Fail to parse columnsFromPath, expected: " + columnsFromPath + ", filePath: " +
                                 filePath);
             }
@@ -270,7 +271,7 @@ public class DppUtils {
         if (size != columnsFromPath.size()) {
             System.err
                     .println("Fail to parse columnsFromPath, expected: " + columnsFromPath + ", filePath: " + filePath);
-            throw new SparkDppException(
+            throw new SparkWriteSDKException(
                     "Reason: Fail to parse columnsFromPath, expected: " + columnsFromPath + ", filePath: " + filePath);
         }
         return Lists.newArrayList(columns);
