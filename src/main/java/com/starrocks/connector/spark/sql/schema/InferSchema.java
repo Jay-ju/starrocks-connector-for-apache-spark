@@ -106,6 +106,7 @@ public final class InferSchema {
             case "double":
                 return DataTypes.DoubleType;
             case "decimal":
+            case "decimal64":
                 return DataTypes.createDecimalType(Integer.parseInt(field.getSize()), Integer.parseInt(field.getScale()));
             case "char":
             case "varchar":
@@ -115,6 +116,8 @@ public final class InferSchema {
                 return DataTypes.DateType;
             case "datetime":
                 return DataTypes.TimestampType;
+            case "boolean":
+                return DataTypes.BooleanType;
             default:
                 throw new UnsupportedOperationException(String.format(
                         "Unsupported starrocks type, column name: %s, data type: %s", field.getName(), field.getType()));

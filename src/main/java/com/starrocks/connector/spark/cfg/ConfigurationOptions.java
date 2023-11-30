@@ -21,11 +21,11 @@ package com.starrocks.connector.spark.cfg;
 
 import com.google.common.collect.ImmutableSet;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.spark.SparkConf;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.starrocks.connector.spark.sql.conf.StarRocksConfigBase.KEY_FE_HTTP;
 
@@ -102,6 +102,19 @@ public interface ConfigurationOptions {
         }
 
         return false;
+    }
+
+
+    static Map<String, String> removePrefix(Map<String, String> configMap) {
+        Map<String, String> resultMap = new ConcurrentHashMap<>(configMap);
+
+        configMap.forEach((k,v) -> {
+            if (k.startsWith("starrocks.fs")) {
+                resultMap.put(k.replaceFirst("starrocks.", ""), v);
+            }
+        });
+        resultMap.put("writer_type", "0");
+        return resultMap;
     }
 
 }

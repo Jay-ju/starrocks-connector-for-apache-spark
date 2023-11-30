@@ -36,6 +36,7 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder;
 import org.apache.spark.sql.catalyst.encoders.RowEncoder;
 import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.storage.StorageLevel;
 import org.apache.spark.unsafe.types.UTF8String;
@@ -307,13 +308,13 @@ public final class StarRocksPreProcessor implements java.io.Serializable {
             case "DECIMAL128":
                 // TODO(wb):  support decimal round; see be DecimalV2Value::round
                 DecimalParser decimalParser = (DecimalParser) columnParser;
-                BigDecimal srcBigDecimal = (BigDecimal) srcValue;
-                if (srcValue != null && (decimalParser.getMaxValue().compareTo(srcBigDecimal) < 0 ||
-                        decimalParser.getMinValue().compareTo(srcBigDecimal) > 0)) {
+                BigDecimal srcDecimal = ((Decimal) srcValue).toBigDecimal().bigDecimal();
+                if (srcValue != null && (decimalParser.getMaxValue().compareTo(srcDecimal) < 0 ||
+                        decimalParser.getMinValue().compareTo(srcDecimal) > 0)) {
                     LOG.warn(String.format(
                             "decimal value is not valid for defination, column=%s, value=%s,precision=%s,scale=%s",
-                            etlColumn.columnName, srcValue.toString(), srcBigDecimal.precision(),
-                            srcBigDecimal.scale()));
+                            etlColumn.columnName, srcValue.toString(), srcDecimal.precision(),
+                            srcDecimal.scale()));
                     return false;
                 }
                 break;
@@ -364,8 +365,10 @@ public final class StarRocksPreProcessor implements java.io.Serializable {
                     List<Tuple2<List<Object>, Object[]>> result = new ArrayList<>();
                     RowContext rowContext = new RowContext();
                     boolean validData =
-                            rowContext.processRow(keyColumnNames, row, dstTableSchema, baseIndex, parsers, true) &&
-                            rowContext.processRow(valueColumnNames, row, dstTableSchema, baseIndex, parsers, false);
+                            rowContext.processRow(keyColumnNames, row, dstTableSchema, baseIndex, parsers,
+                                    true, keyColumnNames.size()) &&
+                            rowContext.processRow(valueColumnNames, row, dstTableSchema, baseIndex, parsers,
+                                    false, keyColumnNames.size());
                     if (!validData) {
                         return result.iterator();
                     }
@@ -425,12 +428,14 @@ public final class StarRocksPreProcessor implements java.io.Serializable {
                                   StructType tableSchema,
                                   EtlJobConfig.EtlIndex baseIndex,
                                   List<ColumnParser> parsers,
-                                  boolean isKey) {
+                                  boolean isKey,
+                                  int keySize) {
             for (int i = 0; i < columnNames.size(); i++) {
                 String columnName = columnNames.get(i);
                 Object columnObject = row.get((int) tableSchema.getFieldIndex(columnName).get(),
                         tableSchema.apply(columnName).dataType());
-                if (!validateData(columnObject, baseIndex.getColumn(columnName), parsers.get(i), row)) {
+                int parserIdx = i + (isKey ? 0 : keySize);
+                if (!validateData(columnObject, baseIndex.getColumn(columnName), parsers.get(parserIdx), row)) {
                     return false;
                 }
                 columnObject = convertToJavaType(columnObject, tableSchema.apply(columnName).dataType());

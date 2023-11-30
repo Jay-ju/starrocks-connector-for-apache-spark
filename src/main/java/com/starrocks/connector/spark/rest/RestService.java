@@ -230,7 +230,7 @@ public class RestService implements Serializable {
         if (!endPoint.startsWith("http")) {
             endPoint = "http://" + endPoint;
         }
-        return endPoint + API_PREFIX + "/transaction/spark/" + operator;
+        return endPoint + API_PREFIX + "/transactionv2/" + operator;
     }
 
     static String getSchemaUriStr(Settings cfg) throws IllegalArgumentException {
@@ -253,7 +253,7 @@ public class RestService implements Serializable {
     public static Schema getSchema(Settings cfg, Logger logger)
             throws StarrocksException {
         logger.trace("Finding schema.");
-        HttpGet httpGet = new HttpGet(getSchemaUriStr(cfg) + SCHEMA);
+        HttpGet httpGet = new HttpGet(getSchemaUriStr(cfg) + SCHEMA + "?withExtendedInfo=true");
         String response = send(cfg, httpGet, logger);
         logger.debug("Find schema response is '{}'.", response);
         return parseSchema(response, logger);

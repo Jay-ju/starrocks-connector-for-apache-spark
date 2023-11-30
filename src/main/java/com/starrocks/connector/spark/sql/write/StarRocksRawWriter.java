@@ -34,8 +34,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static com.starrocks.connector.spark.cfg.ConfigurationOptions.removePrefix;
 
 public class StarRocksRawWriter extends StarRocksWriter {
     private static final Logger log = LoggerFactory.getLogger(StarRocksRawWriter.class);
@@ -123,10 +126,8 @@ public class StarRocksRawWriter extends StarRocksWriter {
         tabletId = Long.parseLong(split[0]);
         backendId = Long.valueOf(split[1]);
         String rootPath = split[2];
-        Map<String, String> configMap = config.getOriginOptions();
-        configMap.put("writer_type", "0");
-
-        starrocksWriter = new StarrocksWriter(tabletId, pbSchema, txnId, rootPath, config.getOriginOptions());
+        Map<String, String> configMap = removePrefix(config.getOriginOptions());
+        starrocksWriter = new StarrocksWriter(tabletId, pbSchema, txnId, rootPath, configMap);
         starrocksWriter.open();
 
         isFirstRecord = false;

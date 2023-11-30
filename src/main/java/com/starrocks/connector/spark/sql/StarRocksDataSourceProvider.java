@@ -102,7 +102,7 @@ public class StarRocksDataSourceProvider implements RelationProvider,
 
         schema.getProperties().forEach(field -> {
             StarRocksField starRocksField = new StarRocksField(field.getName(), field.getType(), field.getPrecision(),
-                    String.valueOf(field.getPrecision()), String.valueOf(field.getPrecision()));
+                    String.valueOf(field.getPrecision()), String.valueOf(field.getScale()));
             columns.add(starRocksField);
             if (field.getIsKey()) {
                 pks.add(starRocksField);

@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static com.starrocks.connector.spark.cfg.ConfigurationOptions.removePrefix;
 import static com.starrocks.connector.spark.rest.RestService.TXN_COMMIT;
 import static com.starrocks.connector.spark.rest.RestService.TXN_PREPARE;
 import static com.starrocks.connector.spark.sql.conf.WriteStarRocksConfig.FOR_TEST_RAW_WRITER;
@@ -106,21 +107,22 @@ public class StarRocksWrite implements BatchWrite, StreamingWrite {
             List<EtlJobConfig.EtlPartition> partitions = schema.getEtlTable().getPartitionInfo().getPartitions();
             // TODO support multi partition
             String rootPath = partitions.get(0).getStoragePath();
-            List<Long> allTabletIds = partitions.get(0).getTabletIds();
+            List<Long> unWriteTabletIds = partitions.get(0).getTabletIds();
             List<Long> allBackendIds = partitions.get(0).getBackendIds();
 
-            Map<Long, Long> tablet2Backend = IntStream.range(0, allTabletIds.size())
+            Map<Long, Long> tablet2Backend = IntStream.range(0, unWriteTabletIds.size())
                     .boxed()
-                    .collect(Collectors.toMap(allTabletIds::get, allBackendIds::get));
+                    .collect(Collectors.toMap(unWriteTabletIds::get, allBackendIds::get));
 
             // only have unwritten tablets
-            allTabletIds.removeAll(writeTabletIds);
+            unWriteTabletIds.removeAll(writeTabletIds);
 
             TabletSchema.TabletSchemaPB pbSchema = schema.getEtlTable().convert();
             Long txnId = ((StarRocksWriterCommitMessage) messages[0]).getTxnId();
 
-            allTabletIds.forEach(unwrittenTabletId -> {
-                Map<String, String> configMap = config.getOriginOptions();
+            // write txn log
+            unWriteTabletIds.forEach(unwrittenTabletId -> {
+                Map<String, String> configMap = removePrefix(config.getOriginOptions());
                 configMap.put("writer_type", "0");
                 StarrocksWriter starrocksWriter =
                         new StarrocksWriter(unwrittenTabletId, pbSchema, txnId, rootPath, configMap);
@@ -129,6 +131,9 @@ public class StarRocksWrite implements BatchWrite, StreamingWrite {
                 starrocksWriter.finish();
                 starrocksWriter.close();
                 starrocksWriter.release();
+
+                // add commit info
+                tabletCommitInfos.add(new TabletCommitInfo(unwrittenTabletId, tablet2Backend.get(unwrittenTabletId)));
             });
 
             RestService.preOrCommitTransaction(sparkSettings, tabletCommitInfos, TXN_PREPARE);
