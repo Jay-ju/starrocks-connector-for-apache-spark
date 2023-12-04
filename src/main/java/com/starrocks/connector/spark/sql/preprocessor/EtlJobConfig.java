@@ -297,7 +297,6 @@ public class EtlJobConfig implements Serializable {
                     .setId(indexes.get(0).indexId)
                     .setKeysType(convert(indexes.get(0).indexType))
                     .setCompressionType(Types.CompressionTypePB.LZ4_FRAME);
-            final int uniqueId = 0;
             for(int idx = 0; idx < indexes.get(0).getColumns().size(); idx++) {
                 EtlColumn col = indexes.get(0).getColumns().get(idx);
                 builder.addColumn(col.convert(idx));
@@ -377,6 +376,8 @@ public class EtlJobConfig implements Serializable {
                     .setType(columnType)
                     .setLength(stringLength)
                     .setIndexLength(stringLength)
+                    .setPrecision(precision)
+                    .setFrac(scale)
                     .setAggregation(null == aggregationType ? "NONE" : aggregationType)
                     .build();
         }

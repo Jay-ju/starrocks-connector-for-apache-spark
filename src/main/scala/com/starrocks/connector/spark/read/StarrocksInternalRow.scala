@@ -20,6 +20,7 @@
 package com.starrocks.connector.spark.read
 
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
+import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.unsafe.types.UTF8String
 
 class StarrocksInternalRow(override val values: Array[Any])
@@ -30,6 +31,20 @@ class StarrocksInternalRow(override val values: Array[Any])
   def this() = this(null)
 
   def getAs[T](ordinal: Int) = genericGet(ordinal).asInstanceOf[T]
+
+  override def getLong(ordinal: Int): Long = {
+    values.apply(ordinal) match {
+      case d: java.sql.Timestamp => DateTimeUtils.fromJavaTimestamp(d)
+      case _ => super.getLong(ordinal)
+    }
+  }
+
+  override def getInt(ordinal: Int): Int = {
+    values.apply(ordinal) match {
+      case d: java.sql.Date => DateTimeUtils.anyToDays(d)
+      case _ => super.getInt(ordinal)
+    }
+  }
 
   override def getUTF8String(ordinal: Int): UTF8String = UTF8String.fromString(getAs[String](ordinal))
 }

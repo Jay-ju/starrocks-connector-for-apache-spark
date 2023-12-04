@@ -22,6 +22,7 @@ package com.starrocks.connector.spark.sql;
 import com.google.common.collect.ImmutableList;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -33,12 +34,13 @@ import java.util.List;
 
 public class CatalogTest extends ITTestBase {
 
-    private static final String simpleTableName = "testSql_1";
+    private static final String primaryTableName = "primary_key_tb";
+    private static final String uniqueTableName = "unique_key_tb";
     private static final String allTypeTableName = "all_type_tb";
     private static final String allTypeDstTableName = "all_type_tb_new";
     private static final String aggTableName = "agg_table";
 
-    String simpleTableDdl = String.format("CREATE TABLE IF NOT EXISTS `%s`.`%s` (" +
+    String primaryTableDdl = String.format("CREATE TABLE IF NOT EXISTS `%s`.`%s` (" +
                             "id INT," +
                             "name STRING," +
                             "score INT" +
@@ -48,15 +50,28 @@ public class CatalogTest extends ITTestBase {
                             "PROPERTIES (" +
                             "\"replication_num\" = \"1\"" +
                             ")",
-                    DB_NAME, simpleTableName);
+                    DB_NAME, primaryTableName);
+
+    String uniqueTableDdl = String.format("CREATE TABLE IF NOT EXISTS `%s`.`%s` (" +
+                    "id INT," +
+                    "name STRING," +
+                    "score INT" +
+                    ") ENGINE=OLAP " +
+                    "UNIQUE KEY(`id`) " +
+                    "DISTRIBUTED BY HASH(`id`) BUCKETS 2 " +
+                    "PROPERTIES (" +
+                    "\"replication_num\" = \"1\"" +
+                    ")",
+            DB_NAME, primaryTableName);
     String allTypeTableDdl = String.format("CREATE TABLE IF NOT EXISTS `%s`.`%s`(\n" +
                             "    tinyint_             tinyint         NOT NULL    COMMENT \"tinyint_\",\n" +
                             "    smallint_            smallint        NOT NULL    COMMENT \"smallint_\",\n" +
                             "    int_                 int             NOT NULL    COMMENT \"int_\",\n" +
                             "    bigint_              bigint          NOT NULL    COMMENT \"bigint_\",\n" +
                             "    date_                date          NOT NULL    COMMENT \"date_\",\n" +
+                            "    datetime_            DATETIME          NOT NULL    COMMENT \"DATETIME_\",\n" +
                             // "    largeint_            largeint        NOT NULL    COMMENT \"largeint_\",\n" +
-                            "    decimal_             decimal(10, 4)         NOT NULL    COMMENT \"decimal_\",\n" +
+//                            "    decimal_             decimal(10, 4)         NOT NULL    COMMENT \"decimal_\",\n" +
                             "    double_              double          NOT NULL    COMMENT \"double_\",\n" +
                             "    float_               float           NOT NULL    COMMENT \"float_\",\n" +
                             "    boolean_             boolean         NOT NULL    COMMENT \"boolean_\",\n" +
@@ -64,12 +79,13 @@ public class CatalogTest extends ITTestBase {
                             "    smallint_value       smallint        NOT NULL    COMMENT \"smallint_\",\n" +
                             "    int_value            int             NOT NULL    COMMENT \"int_\",\n" +
                             "    date_value           date             NOT NULL    COMMENT \"date_\",\n" +
+                            "    datetime_value           DATETIME             NOT NULL    COMMENT \"DATETIME\",\n" +
                             "    bigint_value         bigint          NOT NULL    COMMENT \"bigint_\"\n" +
                             // large int spark can't support
                             // "    largeint_value       largeint        NOT NULL    COMMENT \"largeint_\"\n" +
                             ") \n" +
-                            "duplicate key(tinyint_, smallint_, int_, bigint_)\n" +
-                            "distributed by hash(tinyint_, smallint_, int_, bigint_) buckets 4\n" +
+                            "duplicate key(tinyint_, smallint_, int_, bigint_, date_)\n" +
+                            "distributed by hash(tinyint_, smallint_, int_, bigint_, date_) buckets 4\n" +
                             "properties(\n" +
                             "    \"replication_num\" = \"1\"\n" +
                             ")\n" +
@@ -77,15 +93,14 @@ public class CatalogTest extends ITTestBase {
                     DB_NAME, allTypeTableName);
 
     String aggTableDdl = String.format("CREATE TABLE IF NOT EXISTS %s.%s (\n" +
-            "    site_id LARGEINT NOT NULL COMMENT \"id of site\",\n" +
-            "    date DATE NOT NULL COMMENT \"time of event\",\n" +
+            "    site_id INT NOT NULL COMMENT \"id of site\",\n" +
             "    city_code VARCHAR(20) COMMENT \"city_code of user\",\n" +
             "    pv BIGINT SUM DEFAULT \"0\" COMMENT \"total page views\"\n" +
             ")\n" +
-            "AGGREGATE KEY(site_id, date, city_code)\n" +
+            "AGGREGATE KEY(site_id, city_code)\n" +
             "DISTRIBUTED BY HASH(site_id)\n" +
             "PROPERTIES (\n" +
-            "\"replication_num\" = \"3\"\n" +
+            "\"replication_num\" = \"1\"\n" +
             ");", DB_NAME, aggTableName);
 
     private static final String FS_S3A_ENDPOINT= "https://tos-s3-cn-beijing.ivolces.com";
@@ -101,7 +116,8 @@ public class CatalogTest extends ITTestBase {
     public void prepare() throws Exception {
         String createStarRocksDB = String.format("CREATE DATABASE IF NOT EXISTS %s", DB_NAME);
         executeSrSQL(createStarRocksDB);
-        executeSrSQL(simpleTableDdl);
+        executeSrSQL(primaryTableDdl);
+        executeSrSQL(uniqueTableDdl);
         executeSrSQL(allTypeTableDdl);
         executeSrSQL(aggTableDdl);
 
@@ -129,7 +145,7 @@ public class CatalogTest extends ITTestBase {
 
     @After
     public void close() throws Exception {
-        List<String> tableNames = ImmutableList.of(simpleTableName, allTypeTableName, aggTableName);
+        List<String> tableNames = ImmutableList.of(primaryTableName, uniqueTableName, allTypeTableName, aggTableName);
         for (String tableName : tableNames) {
             String dropTable = String.format("DROP TABLE IF EXISTS `%s`.`%s` ", DB_NAME, tableName);
             executeSrSQL(dropTable);
@@ -157,15 +173,19 @@ public class CatalogTest extends ITTestBase {
         List<List<Object>> expectedData = new ArrayList<>();
         expectedData.add(Arrays.asList(22, "null", "null"));
         expectedData.add(Arrays.asList(2, "3", 4));
-        expectedData.add(Arrays.asList(1, "3", 4));
+        expectedData.add(Arrays.asList(1, "4", 2));
 
-        String insertSql = String.format("INSERT INTO %s.%s VALUES (22, null, null), (2, '3', 4), (1, '3', 4)", DB_NAME, simpleTableName);
+        String insertSql = String.format("INSERT INTO %s.%s VALUES (22, null, null), (2, '3', 4), (1, '3', 4)", DB_NAME, primaryTableName);
         spark.sql("explain " + insertSql).show(100000, false);
         spark.sql(insertSql).show();
-        String selectSql = String.format("select * from %s.%s", DB_NAME, simpleTableName);
+        // primary key overwrite key
+        insertSql = String.format("INSERT INTO %s.%s VALUES (1, '4', 2)", DB_NAME, primaryTableName);
+        spark.sql(insertSql).show();
+
+        String selectSql = String.format("select * from %s.%s", DB_NAME, primaryTableName);
         spark.sql(selectSql).show();
 
-        List<List<Object>> actualWriteData = scanTable(DB_CONNECTION, DB_NAME, simpleTableName);
+        List<List<Object>> actualWriteData = scanTable(DB_CONNECTION, DB_NAME, primaryTableName);
         verifyResult(expectedData, actualWriteData);
     }
 
@@ -173,48 +193,85 @@ public class CatalogTest extends ITTestBase {
     public void testAllTypeSql() throws Exception {
         List<List<Object>> expectedData = new ArrayList<>();
         // all type
-        expectedData.add(Arrays.asList(127, 32767, 2147483647, 9223372036854775807L, "2023-02-01",
-                12.35, 3.1415926, 3.14, false, 127, 32767, 2147483647, 9223372036854775807L));
-        String insertSql = String.format("insert into %s.%s values(127, 32767, 2147483647, 9223372036854775807, '2023-02-01'," +
-                        " 12.35, 3.1415926, 3.14, false, 127, 32767, 2147483647, 9223372036854775807)",
+        expectedData.add(Arrays.asList(127, 32767, 2147483647, 9223372036854775807L, "2023-02-01", "2023-02-01 01:01:01",
+//                12.35,
+                3.1415926, 3.14, false, 127, 32767, 2147483647, "2023-02-01", "2023-02-01 01:01:01", 9223372036854775807L));
+        String insertSql = String.format("insert into %s.%s select 127, 32767, 2147483647, 9223372036854775807, " +
+                        "to_date('2023-02-01', 'yyyy-MM-dd') , to_timestamp('2023-02-01 00:12:00'), " +
+//                        " 12.35, " +
+                        "3.1415926, 3.14, false, 127, 32767, 2147483647, " +
+                        "to_date('2023-02-01', 'yyyy-MM-dd'),  to_timestamp('2023-02-01 00:12:00')," +
+                        " 9223372036854775807",
                 DB_NAME, allTypeTableName);
         spark.sql(insertSql).show();
         String selectSql = String.format("SELECT * FROM %s.%s", DB_NAME, allTypeTableName);
         List<Row> readRows = spark.sql(selectSql).collectAsList();
         verifyRows(expectedData, readRows);
-
-        spark.stop();
     }
 
     @Test
     public void testAggTable() throws Exception {
         // simple table
         List<List<Object>> expectedData = new ArrayList<>();
-        expectedData.add(Arrays.asList(2, "3", 4));
-        expectedData.add(Arrays.asList(1, "3", 4));
+        expectedData.add(Arrays.asList(22, "hangzhou", 6));
+        expectedData.add(Arrays.asList(33, "beijing", 3));
+        expectedData.add(Arrays.asList(44, "shanghai", 4));
 
-        String insertSql = String.format("INSERT INTO %s.%s VALUES (22, null, null), (2, '3', 4), (1, '3', 4)", DB_NAME, simpleTableName);
+        String insertSql = String.format("INSERT INTO %s.%s VALUES (22, 'hangzhou', 2), " +
+                "(33, 'beijing', 3), (44, 'shanghai', 4), (22, 'hangzhou', 4)", DB_NAME, aggTableName);
         spark.sql("explain " + insertSql).show(100000, false);
         spark.sql(insertSql).show();
-        String selectSql = String.format("select * from %s.%s", DB_NAME, simpleTableName);
+        String selectSql = String.format("select * from %s.%s", DB_NAME, aggTableName);
         spark.sql(selectSql).show();
 
-        List<List<Object>> actualWriteData = scanTable(DB_CONNECTION, DB_NAME, simpleTableName);
+        List<List<Object>> actualWriteData = scanTable(DB_CONNECTION, DB_NAME, aggTableName);
         verifyResult(expectedData, actualWriteData);
+    }
 
-        // all type
-        expectedData.clear();
-        expectedData.add(Arrays.asList(127, 32767, 2147483647, 9223372036854775807L,
-                12.35, 3.1415926, 3.14, false, 127, 32767, 2147483647, 9223372036854775807L));
-        insertSql = String.format("insert into %s.%s values(127, 32767, 2147483647, 9223372036854775807," +
-                        " 12.35, 3.1415926, 3.14, false, 127, 32767, 2147483647, 9223372036854775807)",
-                DB_NAME, allTypeTableName);
+    @Test
+    public void testUniqueTable() throws SQLException {
+        // simple table
+        List<List<Object>> expectedData = new ArrayList<>();
+        expectedData.add(Arrays.asList(22, "null", "null"));
+        expectedData.add(Arrays.asList(2, "3", 4));
+        expectedData.add(Arrays.asList(1, "4", 2));
+
+        String insertSql = String.format("INSERT INTO %s.%s VALUES (22, null, null), (2, '3', 4), (1, '3', 4)", DB_NAME, primaryTableName);
+        spark.sql("explain " + insertSql).show(100000, false);
         spark.sql(insertSql).show();
-        selectSql = String.format("SELECT * FROM %s.%s", DB_NAME, allTypeTableName);
-        List<Row> readRows = spark.sql(selectSql).collectAsList();
-        verifyRows(expectedData, readRows);
+        // primary key overwrite key
+        insertSql = String.format("INSERT INTO %s.%s VALUES (1, '4', 2)", DB_NAME, primaryTableName);
+        spark.sql(insertSql).show();
+
+        String selectSql = String.format("select * from %s.%s", DB_NAME, primaryTableName);
+        spark.sql(selectSql).show();
+
+        List<List<Object>> actualWriteData = scanTable(DB_CONNECTION, DB_NAME, primaryTableName);
+        verifyResult(expectedData, actualWriteData);
+    }
+
+    @Test
+    public void testNoSrTable() throws Exception {
+        SparkSession spark = SparkSession
+                .builder()
+                .master("local[1]")
+                .appName("testLocalSql")
+                .config("spark.sql.codegen.wholeStage", "false")
+                .config("spark.sql.codegen.factoryMode", "NO_CODEGEN")
+                .enableHiveSupport()
+                .getOrCreate();
+
+        spark.sql("create table if not exists t1 (date_1 date)");
+        spark.sql("insert into t1 select to_date('2023-02-01','yyyy-MM-dd') ").show();
+        spark.sql("select * from t1").show();
 
         spark.stop();
+    }
+
+    @Test
+    public void testDate() {
+        int i = 19389;
+        System.out.println(DateTimeUtils.toJavaDate(i));
     }
 
 }

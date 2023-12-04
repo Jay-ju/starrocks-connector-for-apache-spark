@@ -29,12 +29,12 @@ import com.starrocks.format.Column;
 import com.starrocks.format.StarrocksWriter;
 import com.starrocks.proto.TabletSchema;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -169,6 +169,14 @@ public class StarRocksRawWriter extends StarRocksWriter {
                 case "VARCHAR":
                     column.appendString(internalRow.getString(i));
                     break;
+                case "DATE":
+                    column.appendDate(DateTimeUtils.toJavaDate(internalRow.getInt(i)));
+                    break;
+                case "DATETIME":
+                    column.appendTimestamp(DateTimeUtils.toJavaTimestamp(internalRow.getLong(i)));
+                    break;
+                default:
+                    throw new RuntimeException("write not support current type:" + columns.get(i).columnType);
             }
         }
     }

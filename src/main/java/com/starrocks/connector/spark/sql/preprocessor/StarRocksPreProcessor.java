@@ -35,6 +35,7 @@ import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder;
 import org.apache.spark.sql.catalyst.encoders.RowEncoder;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.sql.types.StructType;
@@ -48,7 +49,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-import static org.apache.spark.sql.types.DataTypes.StringType;
+import static org.apache.spark.sql.types.DataTypes.*;
 
 // This class is a Spark-based data preprocessing program,
 // which will make use of the distributed compute framework of spark to
@@ -453,6 +454,12 @@ public final class StarRocksPreProcessor implements java.io.Serializable {
     private Object convertToJavaType(Object value, DataType dataType) {
         if (value instanceof UTF8String && dataType == StringType) {
             return ((UTF8String) value).toString();
+        }
+        if (value instanceof Integer && dataType == DateType) {
+            return DateTimeUtils.toJavaDate((Integer) value);
+        }
+        if (value instanceof Long && dataType == TimestampType) {
+            return DateTimeUtils.toJavaTimestamp((long) value);
         }
         return value;
     }

@@ -58,6 +58,7 @@ case class StarRocksWriteExec(batchWrite: BatchWrite,
         tempRdd
       }
     }
+    rdd.foreach(v => println(v.toString))
     val newRdd = processRDD(batchWrite, rdd)
 
     val writerFactory = batchWrite.createBatchWriterFactory(
