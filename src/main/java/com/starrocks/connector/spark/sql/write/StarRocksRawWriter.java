@@ -42,6 +42,7 @@ import static com.starrocks.connector.spark.cfg.ConfigurationOptions.removePrefi
 
 public class StarRocksRawWriter extends StarRocksWriter {
     private static final Logger log = LoggerFactory.getLogger(StarRocksRawWriter.class);
+    private static final int DEFAULT_BATCH_ROW_COUNT = 4096;
 
     private final WriteStarRocksConfig config;
     private final StarRocksSchema schema;
@@ -53,6 +54,7 @@ public class StarRocksRawWriter extends StarRocksWriter {
     private TabletSchema.TabletSchemaPB pbSchema;
     private StarrocksWriter starrocksWriter;
     private Chunk chunk;
+    private int  batchRowCount = 0;
     private long tabletId;
     private long backendId;
     private boolean isFirstRecord = true;
@@ -80,15 +82,19 @@ public class StarRocksRawWriter extends StarRocksWriter {
 
     @Override
     public void write(InternalRow internalRow) throws IOException {
+        batchRowCount ++ ;
         if (isFirstRecord) {
             newStarRocksWriter(internalRow);
+            chunk = starrocksWriter.newChunk(DEFAULT_BATCH_ROW_COUNT);
         }
         // TODO only write 1 row
-        chunk = starrocksWriter.newChunk(1);
         internalRow2Chunk(internalRow);
-        starrocksWriter.write(chunk);
-        System.out.println("=== debug ===" + chunk.debugRow(0) + ", tablet id" + tabletId);
-        chunk.release();
+        if (batchRowCount % DEFAULT_BATCH_ROW_COUNT == 0) {
+            starrocksWriter.write(chunk);
+            chunk.release();
+            chunk = starrocksWriter.newChunk(DEFAULT_BATCH_ROW_COUNT);
+            batchRowCount = 0;
+        }
         log.info("partitionId: {}, taskId: {}, epochId: {}, receive raw row: {}",
                 partitionId, taskId, epochId, internalRow);
     }
@@ -99,6 +105,7 @@ public class StarRocksRawWriter extends StarRocksWriter {
         if (starrocksWriter == null) {
             return new StarRocksWriterCommitMessage(partitionId, taskId, epochId, null, null, txnId);
         } else {
+            starrocksWriter.write(chunk);
             starrocksWriter.flush();
             starrocksWriter.finish();
         }
